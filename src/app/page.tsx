@@ -17,7 +17,8 @@ import {
   Sparkles,
   Files,
   Grid3X3,
-  Check
+  Check,
+  Info
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,11 +48,22 @@ import { detectTableRegions, processTablesOnPage, detectLinesInRegions } from '@
 import { pdfToImages } from '@/lib/ocr/pdf-loader';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 const SUPPORTED_LANGS = [
   { id: 'eng', label: 'English' },
   { id: 'chi_tra', label: 'Chinese (Traditional)' },
   { id: 'chi_sim', label: 'Chinese (Simplified)' },
+  { id: 'jpn', label: 'Japanese' },
+  { id: 'kor', label: 'Korean' },
+  { id: 'fra', label: 'French' },
+  { id: 'deu', label: 'German' },
+  { id: 'spa', label: 'Spanish' },
+  { id: 'ita', label: 'Italian' },
+  { id: 'por', label: 'Portuguese' },
+  { id: 'vie', label: 'Vietnamese' },
+  { id: 'rus', label: 'Russian' },
+  { id: 'ara', label: 'Arabic' },
 ];
 
 export default function TableScanPro() {
@@ -63,9 +75,20 @@ export default function TableScanPro() {
   const [progress, setProgress] = useState(0);
   const [allExtractedData, setAllExtractedData] = useState<ExtractedTable[]>([]);
   const [isDetecting, setIsDetecting] = useState(false);
+  const [isCvLoaded, setIsCvLoaded] = useState(false);
   const { toast } = useToast();
 
   const currentPage = pages[currentPageIndex];
+
+  useEffect(() => {
+    const checkCv = setInterval(() => {
+      if (typeof window !== 'undefined' && window.cv) {
+        setIsCvLoaded(true);
+        clearInterval(checkCv);
+      }
+    }, 500);
+    return () => clearInterval(checkCv);
+  }, []);
 
   useEffect(() => {
     if (status === 'selecting-tables' && pages.length > 0 && currentPage) {
@@ -255,6 +278,15 @@ export default function TableScanPro() {
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
+      {!isCvLoaded && (
+        <Alert className="mb-6 bg-primary/10 border-primary/20 text-primary">
+          <Info size={16} />
+          <AlertDescription className="text-xs font-medium">
+            OpenCV.js is initializing for advanced table analysis...
+          </AlertDescription>
+        </Alert>
+      )}
+
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center text-white shadow-lg">
@@ -278,12 +310,15 @@ export default function TableScanPro() {
                 </span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-60 p-4" align="end">
-              <div className="space-y-4">
+            <PopoverContent className="w-64 p-0" align="end">
+              <div className="p-4 border-b bg-muted/20">
                 <h4 className="font-bold text-sm">OCR Languages</h4>
-                <div className="space-y-2">
+                <p className="text-[10px] text-muted-foreground">Select multiple for mixed-language tables</p>
+              </div>
+              <ScrollArea className="h-64">
+                <div className="p-4 space-y-3">
                   {SUPPORTED_LANGS.map((lang) => (
-                    <div key={lang.id} className="flex items-center space-x-2">
+                    <div key={lang.id} className="flex items-center space-x-3">
                       <Checkbox 
                         id={lang.id} 
                         checked={selectedLangs.includes(lang.id)}
@@ -295,7 +330,7 @@ export default function TableScanPro() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </ScrollArea>
             </PopoverContent>
           </Popover>
 
