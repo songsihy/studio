@@ -38,10 +38,12 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   useEffect(() => {
     if (imageSrc) {
       const img = new Image();
-      img.onload = () => {
+      const handleLoad = () => {
         setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
       };
+      img.onload = handleLoad;
       img.src = imageSrc;
+      if (img.complete) handleLoad();
     }
   }, [imageSrc]);
 
@@ -120,8 +122,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
 
   if (!imageSrc || !imgNaturalSize) return null;
 
-  // Calculate correct aspect ratio of the crop
-  // aspectRatio = (width% * naturalWidth) / (height% * naturalHeight)
+  // Correct calculation of the cropped table's aspect ratio
+  // pixelWidth = (region.width% of imageNaturalWidth)
   const cropAspect = (cropRect.width * imgNaturalSize.w) / (cropRect.height * imgNaturalSize.h);
 
   return (
@@ -136,15 +138,15 @@ export const LineEditor: React.FC<LineEditorProps> = ({
                   <Plus className="w-4 h-4 mr-1" /> Vertical
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Click to add vertical guide</TooltipContent>
+              <TooltipContent>Add vertical grid guide</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" variant="ghost" onClick={() => clearLines('v')} className="h-8 text-destructive">
+                <Button size="sm" variant="ghost" onClick={() => clearLines('v')} className="h-8 text-destructive hover:bg-destructive/10">
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Clear verticals</TooltipContent>
+              <TooltipContent>Clear all verticals</TooltipContent>
             </Tooltip>
             <div className="w-px bg-border mx-1" />
             <Tooltip>
@@ -153,15 +155,15 @@ export const LineEditor: React.FC<LineEditorProps> = ({
                   <Plus className="w-4 h-4 mr-1" /> Horizontal
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Click to add horizontal guide</TooltipContent>
+              <TooltipContent>Add horizontal grid guide</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" variant="ghost" onClick={() => clearLines('h')} className="h-8 text-destructive">
+                <Button size="sm" variant="ghost" onClick={() => clearLines('h')} className="h-8 text-destructive hover:bg-destructive/10">
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Clear horizontals</TooltipContent>
+              <TooltipContent>Clear all horizontals</TooltipContent>
             </Tooltip>
           </div>
         </TooltipProvider>
@@ -189,26 +191,28 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           alt="Table crop"
           className="absolute max-w-none pointer-events-none"
           style={{
+            // Scale the image up so that the identified region fills the entire container
             width: `${10000 / cropRect.width}%`,
             height: `${10000 / cropRect.height}%`,
+            // Offset the image so the top-left of the region aligns with the top-left of the container
             left: `${- (cropRect.x / cropRect.width) * 100}%`,
             top: `${- (cropRect.y / cropRect.height) * 100}%`,
           }}
         />
 
-        {/* Vertical Lines */}
+        {/* Render Grid Lines */}
         {vLines.map(line => (
           <div
             key={line.id}
             className={cn(
-              "absolute top-0 bottom-0 w-1.5 -ml-0.75 cursor-col-resize group z-20",
-              activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/70"
+              "absolute top-0 bottom-0 w-1.5 -ml-0.75 cursor-col-resize group z-20 transition-colors",
+              activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/60"
             )}
             style={{ left: `${line.position}%` }}
             onMouseDown={(e) => handleMouseDown(line.id, 'v', e)}
           >
             <button 
-              className="absolute top-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 bg-destructive text-white rounded-full p-0.5 hover:scale-110 transition-all shadow-lg"
+              className="absolute top-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 bg-destructive text-white rounded-full p-0.5 shadow-lg transition-opacity"
               onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'v'); }}
             >
               <X className="w-3 h-3" />
@@ -216,19 +220,18 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           </div>
         ))}
 
-        {/* Horizontal Lines */}
         {hLines.map(line => (
           <div
             key={line.id}
             className={cn(
-              "absolute left-0 right-0 h-1.5 -mt-0.75 cursor-row-resize group z-20",
-              activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/70"
+              "absolute left-0 right-0 h-1.5 -mt-0.75 cursor-row-resize group z-20 transition-colors",
+              activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/60"
             )}
             style={{ top: `${line.position}%` }}
             onMouseDown={(e) => handleMouseDown(line.id, 'h', e)}
           >
             <button 
-              className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 bg-destructive text-white rounded-full p-0.5 hover:scale-110 transition-all shadow-lg"
+              className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 bg-destructive text-white rounded-full p-0.5 shadow-lg transition-opacity"
               onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'h'); }}
             >
               <X className="w-3 h-3" />
@@ -238,8 +241,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
 
         {addMode && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-primary/5">
-            <span className="bg-primary text-white text-[10px] px-2 py-1 rounded-full shadow-lg font-bold">
-              {addMode === 'v' ? 'Adding Vertical Line' : 'Adding Horizontal Line'}
+            <span className="bg-primary text-white text-[10px] px-3 py-1 rounded-full shadow-lg font-bold">
+              Click to place {addMode === 'v' ? 'column' : 'row'} guide
             </span>
           </div>
         )}

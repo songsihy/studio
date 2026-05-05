@@ -38,6 +38,8 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
 
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
+    
+    // Calculate position as percentage of the ACTUAL image container
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
     
@@ -62,7 +64,8 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
     const width = Math.abs(currentPos.x - startPos.x);
     const height = Math.abs(currentPos.y - startPos.y);
 
-    if (width > 2 && height > 2) {
+    // Only add if region has a significant size
+    if (width > 1 && height > 1) {
       const newRegion: TableRegion = {
         id: Math.random().toString(36).substr(2, 9),
         name: `table_${regions.length + 1}`,
@@ -87,12 +90,12 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 p-4">
-      {/* Table Management Panel - Global List */}
+      {/* Table Management Panel */}
       <Card className="w-full lg:w-80 border-none shadow-none bg-muted/30">
         <CardContent className="p-4 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold flex items-center gap-2">
-              <ListTodo size={16} className="text-primary" /> All Identified Tables
+              <ListTodo size={16} className="text-primary" /> Identified Tables
             </h3>
           </div>
           
@@ -115,7 +118,7 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
                     </div>
 
                     <div className="space-y-2 pl-2 border-l-2 border-muted">
-                      {pageRegions.map((region, rIdx) => (
+                      {pageRegions.map((region) => (
                         <div 
                           key={region.id}
                           onMouseEnter={() => pIdx === currentPageIndex && setHoveredRegionId(region.id)}
@@ -171,7 +174,7 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
                     <Plus size={20} />
                   </div>
                   <p className="text-xs text-muted-foreground italic">
-                    No tables identified yet.
+                    Draw regions on the page to identify tables.
                   </p>
                 </div>
               )}
@@ -180,79 +183,82 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
         </CardContent>
       </Card>
 
-      {/* Preview and Canvas */}
+      {/* Preview and Drawing Canvas */}
       <div className="flex-1 space-y-4">
         <div className="flex justify-between items-center bg-card p-2 px-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
             <Plus className="w-3 h-3 text-primary" />
-            Page {currentPageIndex + 1}: Draw rectangles to define table boundaries
+            Page {currentPageIndex + 1}: Click and drag to define table areas
           </div>
         </div>
 
-        <div 
-          ref={containerRef}
-          className="relative border rounded-xl overflow-hidden bg-white shadow-inner select-none cursor-crosshair flex items-center justify-center"
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          style={{ minHeight: '500px' }}
-        >
-          {imageSrc ? (
-            <>
-              <img 
-                src={imageSrc} 
-                alt="Document" 
-                className="w-full h-auto block pointer-events-none"
-              />
-              
-              {/* Existing Regions for current page */}
-              {regions.map(region => (
-                <div
-                  key={region.id}
-                  onMouseEnter={() => setHoveredRegionId(region.id)}
-                  onMouseLeave={() => setHoveredRegionId(null)}
-                  className={cn(
-                    "absolute border-2 transition-all duration-200",
-                    hoveredRegionId === region.id 
-                      ? "border-primary bg-primary/20 z-40" 
-                      : "border-primary/60 bg-primary/5 z-30"
-                  )}
-                  style={{
-                    left: `${region.x}%`,
-                    top: `${region.y}%`,
-                    width: `${region.width}%`,
-                    height: `${region.height}%`,
-                  }}
-                >
-                  <div className={cn(
-                    "absolute -top-6 left-0 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-t-sm whitespace-nowrap shadow-sm transition-opacity",
-                    hoveredRegionId === region.id ? "opacity-100" : "opacity-0"
-                  )}>
-                    {region.name}
-                  </div>
-                </div>
-              ))}
-
-              {/* Current Drawing Selection */}
-              {isDrawing && (
-                <div
-                  className="absolute border-2 border-dashed border-secondary bg-secondary/10 z-50"
-                  style={{
-                    left: `${Math.min(startPos.x, currentPos.x)}%`,
-                    top: `${Math.min(startPos.y, currentPos.y)}%`,
-                    width: `${Math.abs(currentPos.x - startPos.x)}%`,
-                    height: `${Math.abs(currentPos.y - startPos.y)}%`,
-                  }}
+        <div className="relative border rounded-xl overflow-hidden bg-white shadow-inner flex items-center justify-center min-h-[500px]">
+          {/* 
+              Crucial Fix: The containerRef is now on a div that exactly matches the image's dimensions.
+              This ensures that our percentage-based coordinates are relative ONLY to the image.
+          */}
+          <div 
+            ref={containerRef}
+            className="relative inline-block select-none cursor-crosshair"
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          >
+            {imageSrc ? (
+              <>
+                <img 
+                  src={imageSrc} 
+                  alt="Document" 
+                  className="max-w-full h-auto block pointer-events-none"
                 />
-              )}
-            </>
-          ) : (
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <Loader2 className="w-8 h-8 animate-spin" />
-              <p className="text-sm">Loading document preview...</p>
-            </div>
-          )}
+                
+                {/* Existing Regions */}
+                {regions.map(region => (
+                  <div
+                    key={region.id}
+                    className={cn(
+                      "absolute border-2 transition-all duration-200",
+                      hoveredRegionId === region.id 
+                        ? "border-primary bg-primary/20 z-40" 
+                        : "border-primary/60 bg-primary/5 z-30"
+                    )}
+                    style={{
+                      left: `${region.x}%`,
+                      top: `${region.y}%`,
+                      width: `${region.width}%`,
+                      height: `${region.height}%`,
+                    }}
+                  >
+                    <div className={cn(
+                      "absolute -top-6 left-0 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-t-sm whitespace-nowrap shadow-sm",
+                      hoveredRegionId === region.id ? "opacity-100" : "opacity-0"
+                    )}>
+                      {region.name}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Drawing Layer */}
+                {isDrawing && (
+                  <div
+                    className="absolute border-2 border-dashed border-secondary bg-secondary/10 z-50 pointer-events-none"
+                    style={{
+                      left: `${Math.min(startPos.x, currentPos.x)}%`,
+                      top: `${Math.min(startPos.y, currentPos.y)}%`,
+                      width: `${Math.abs(currentPos.x - startPos.x)}%`,
+                      height: `${Math.abs(currentPos.y - startPos.y)}%`,
+                    }}
+                  />
+                )}
+              </>
+            ) : (
+              <div className="p-20 text-center space-y-4">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
+                <p className="text-sm text-muted-foreground font-medium">Loading document page...</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
