@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   FileText, 
   Table as TableIcon, 
@@ -81,9 +81,10 @@ export default function TableScanPro() {
 
   const currentPage = pages[currentPageIndex];
 
+  // Robust OpenCV check
   useEffect(() => {
     const checkCv = setInterval(() => {
-      if (typeof window !== 'undefined' && window.cv) {
+      if (typeof window !== 'undefined' && window.cv && window.cv.imread) {
         setIsCvLoaded(true);
         clearInterval(checkCv);
       }
@@ -97,7 +98,43 @@ export default function TableScanPro() {
         idx === currentPageIndex ? { ...p, tableRegions } : p
       ));
     }
-  }, [tableRegions, status]);
+  }, [tableRegions, status, currentPageIndex, pages.length, currentPage]);
+
+  const autoDetectRegions = useCallback(async (imageSrc: string) => {
+    if (!imageSrc || !isCvLoaded) return;
+    setIsDetecting(true);
+    try {
+      const detected = await detectTableRegions(imageSrc);
+      setTableRegions(detected);
+      if (detected.length > 0) {
+        toast({
+          title: "Detection Complete",
+          description: `Identified ${detected.length} potential table area(s).`,
+        });
+      } else {
+        toast({
+          title: "Detection Finished",
+          description: "No clear tables found. You can draw them manually.",
+        });
+      }
+    } catch (err) {
+      console.warn("Detection failed:", err);
+      toast({
+        variant: "destructive",
+        title: "Detection Failed",
+        description: "OpenCV analysis encountered an error."
+      });
+    } finally {
+      setIsDetecting(false);
+    }
+  }, [isCvLoaded, toast]);
+
+  // Reactive trigger when CV loads
+  useEffect(() => {
+    if (isCvLoaded && status === 'selecting-tables' && tableRegions.length === 0 && currentPage) {
+      autoDetectRegions(currentPage.originalImage);
+    }
+  }, [isCvLoaded, status, tableRegions.length, currentPage, autoDetectRegions]);
 
   const handleFiles = async (files: File[]) => {
     setStatus('uploading');
@@ -128,7 +165,10 @@ export default function TableScanPro() {
       setTableRegions([]);
       setStatus('selecting-tables');
       
-      autoDetectRegions(allPageImages[0]);
+      // Attempt auto-detect immediately if CV is already ready
+      if (isCvLoaded) {
+        autoDetectRegions(allPageImages[0]);
+      }
 
       toast({
         title: "Documents Loaded",
@@ -146,31 +186,9 @@ export default function TableScanPro() {
     if (targetPage) {
       setCurrentPageIndex(index);
       setTableRegions(targetPage.tableRegions || []);
-      if (status === 'selecting-tables' && (targetPage.tableRegions?.length || 0) === 0) {
+      if (status === 'selecting-tables' && (targetPage.tableRegions?.length || 0) === 0 && isCvLoaded) {
         autoDetectRegions(targetPage.originalImage);
       }
-    }
-  };
-
-  const autoDetectRegions = async (imageSrc: string) => {
-    if (!imageSrc || !isCvLoaded) return;
-    setIsDetecting(true);
-    try {
-      const detected = await detectTableRegions(imageSrc);
-      setTableRegions(detected);
-      toast({
-        title: "Detection Complete",
-        description: `Identified ${detected.length} potential table area(s).`,
-      });
-    } catch (err) {
-      console.warn("Detection failed:", err);
-      toast({
-        variant: "destructive",
-        title: "Detection Failed",
-        description: "OpenCV could not automatically define table areas."
-      });
-    } finally {
-      setIsDetecting(false);
     }
   };
 
@@ -397,7 +415,7 @@ export default function TableScanPro() {
                       disabled={isDetecting || !isCvLoaded}
                     >
                       {isDetecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4 text-secondary" />}
-                      Auto-Detect
+                      {isCvLoaded ? "Auto-Detect" : "Initializing..."}
                     </Button>
                   </CardHeader>
                   <TableSelector 

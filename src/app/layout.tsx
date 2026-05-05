@@ -1,4 +1,3 @@
-
 import type { Metadata } from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
@@ -24,10 +23,10 @@ export default function RootLayout({
       <body className="font-body antialiased bg-background min-h-screen">
         {children}
         <Toaster />
-        {/* Load OpenCV.js from CDN as it is standard practice for pure JS implementations */}
+        {/* Load OpenCV.js from CDN with afterInteractive strategy for better reliability */}
         <Script 
           src="https://docs.opencv.org/4.10.0/opencv.js" 
-          strategy="lazyOnload"
+          strategy="afterInteractive"
         />
       </body>
     </html>
