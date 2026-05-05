@@ -99,6 +99,7 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 
     if (opts.denoise) {
       const blurred = new cv.Mat();
+      // Reduced blur size to preserve character detail
       cv.medianBlur(current, blurred, 3);
       current.delete();
       current = blurred;
@@ -131,7 +132,8 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 
     if (opts.binarize) {
       const binary = new cv.Mat();
-      cv.adaptiveThreshold(current, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+      // Increased block size for more robust local thresholding
+      cv.adaptiveThreshold(current, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 21, 5);
       current.delete();
       current = binary;
     }
@@ -144,20 +146,22 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 }
 
 /**
- * Basic Canvas-based pre-processing (Grayscale + Thresholding)
+ * Basic Canvas-based pre-processing (Grayscale + Balanced Thresholding)
  */
 function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, height: number) {
   if (width <= 0 || height <= 0) return;
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
 
+  // Simple global thresholding using a more sensitive luminance weight
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     
-    const val = gray > 140 ? 255 : 0;
+    // Balanced threshold to avoid over-whitening text
+    const val = luminance > 160 ? 255 : 0;
     
     data[i] = val;
     data[i + 1] = val;
