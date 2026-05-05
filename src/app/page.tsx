@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState } from 'react';
@@ -10,7 +11,8 @@ import {
   ChevronRight,
   RotateCcw,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -37,7 +39,8 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
-import { extractTable } from '@/ai/flows/extract-table-flow';
+import { Progress } from '@/components/ui/progress';
+import { detectLines, processTable } from '@/lib/ocr/processor';
 
 export default function TableScanPro() {
   const [status, setStatus] = useState<ProcessingStatus>('idle');
@@ -46,6 +49,7 @@ export default function TableScanPro() {
   const [language, setLanguage] = useState('eng');
   const [vLines, setVLines] = useState<TableLine[]>([]);
   const [hLines, setHLines] = useState<TableLine[]>([]);
+  const [progress, setProgress] = useState(0);
   const [extractedData, setExtractedData] = useState<ExtractedTable | null>(null);
   const { toast } = useToast();
 
@@ -73,32 +77,26 @@ export default function TableScanPro() {
       setCurrentPageIndex(0);
       setStatus('detecting');
       
-      // Initial detection state
-      setTimeout(() => {
-        const initialVLines: TableLine[] = [
-          { id: 'v1', type: 'vertical', position: 20 },
-          { id: 'v2', type: 'vertical', position: 50 },
-          { id: 'v3', type: 'vertical', position: 80 },
-        ];
-        const initialHLines: TableLine[] = [
-          { id: 'h1', type: 'horizontal', position: 30 },
-          { id: 'h2', type: 'horizontal', position: 60 },
-        ];
-        setVLines(initialVLines);
-        setHLines(initialHLines);
-        setStatus('refining');
-        toast({
-          title: "Document Loaded",
-          description: "Adjust the grid lines to help guide the extraction if needed.",
-        });
-      }, 1000);
+      // OpenCV Detection
+      const firstPage = newPages[0];
+      if (firstPage) {
+        const { vLines: detectedV, hLines: detectedH } = await detectLines(firstPage.originalImage);
+        setVLines(detectedV);
+        setHLines(detectedH);
+      }
+      
+      setStatus('refining');
+      toast({
+        title: "Table Detected",
+        description: "OpenCV has identified potential grid lines. Adjust them if necessary.",
+      });
     } catch (err) {
       console.error(err);
       setStatus('error');
       toast({
         variant: "destructive",
-        title: "Upload Failed",
-        description: "There was an error processing your files.",
+        title: "Processing Failed",
+        description: "Could not detect table structure. Please ensure the image is clear.",
       });
     }
   };
@@ -108,12 +106,16 @@ export default function TableScanPro() {
     if (!currentPage?.originalImage) return;
 
     setStatus('ocr-processing');
+    setProgress(0);
     
     try {
-      const result = await extractTable({
-        imageUri: currentPage.originalImage,
-        language: language
-      });
+      const result = await processTable(
+        currentPage.originalImage, 
+        vLines, 
+        hLines, 
+        language,
+        (p) => setProgress(Math.floor(p * 100))
+      );
 
       setExtractedData({ 
         id: `table-${Date.now()}`, 
@@ -123,8 +125,8 @@ export default function TableScanPro() {
       
       setStatus('completed');
       toast({
-        title: "Extraction Complete",
-        description: "Table data has been extracted successfully from the image.",
+        title: "OCR Complete",
+        description: "Table data has been extracted using Tesseract.js.",
       });
     } catch (error) {
       console.error(error);
@@ -132,7 +134,7 @@ export default function TableScanPro() {
       toast({
         variant: "destructive",
         title: "OCR Error",
-        description: "Failed to extract table data. Please check the image clarity.",
+        description: "Failed to recognize text in cells. Check your language selection.",
       });
     }
   };
@@ -160,6 +162,7 @@ export default function TableScanPro() {
     setStatus('idle');
     setVLines([]);
     setHLines([]);
+    setProgress(0);
   };
 
   return (
@@ -171,7 +174,7 @@ export default function TableScanPro() {
           </div>
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-foreground">TableScan Pro</h1>
-            <p className="text-sm text-muted-foreground font-medium">Precision OCR & Data Extraction</p>
+            <p className="text-sm text-muted-foreground font-medium">Local Computer Vision & OCR</p>
           </div>
         </div>
 
@@ -212,10 +215,10 @@ export default function TableScanPro() {
                     <CardTitle className="text-lg">Document Preview</CardTitle>
                   </div>
                   <div className="flex items-center gap-2 text-sm font-medium">
-                    <span className={status === 'ocr-processing' ? "text-primary animate-pulse" : "text-muted-foreground"}>
-                      {status === 'detecting' && 'Initializing...'}
-                      {status === 'refining' && 'Ready for Extraction'}
-                      {status === 'ocr-processing' && 'AI Extraction in Progress...'}
+                    <span className={status === 'ocr-processing' ? "text-primary" : "text-muted-foreground"}>
+                      {status === 'detecting' && 'Detecting lines with OpenCV...'}
+                      {status === 'refining' && 'Ready for OCR'}
+                      {status === 'ocr-processing' && `OCR in Progress: ${progress}%`}
                       {status === 'completed' && 'Processing Complete'}
                       {status === 'error' && 'An Error Occurred'}
                     </span>
@@ -223,6 +226,15 @@ export default function TableScanPro() {
                 </div>
               </CardHeader>
               <CardContent className="p-0">
+                {status === 'ocr-processing' && (
+                  <div className="p-4 bg-muted/20 border-b space-y-2">
+                    <div className="flex justify-between text-xs font-semibold">
+                      <span>Tesseract Engine Processing Cells...</span>
+                      <span>{progress}%</span>
+                    </div>
+                    <Progress value={progress} className="h-2" />
+                  </div>
+                )}
                 <LineEditor 
                   imageSrc={pages[currentPageIndex]?.originalImage || null} 
                   vLines={vLines} 
@@ -249,7 +261,7 @@ export default function TableScanPro() {
                   </div>
                   <div className="flex-1">
                     <p className="font-semibold text-sm">Upload Document</p>
-                    <p className="text-xs text-primary-foreground/70">Images (JPEG, PNG) or PDFs</p>
+                    <p className="text-xs text-primary-foreground/70">Images for local processing</p>
                   </div>
                 </div>
 
@@ -258,8 +270,8 @@ export default function TableScanPro() {
                     {status === 'ocr-processing' || status === 'completed' ? <CheckCircle2 size={16} /> : '2'}
                   </div>
                   <div className="flex-1">
-                    <p className="font-semibold text-sm">Analyze Image</p>
-                    <p className="text-xs text-primary-foreground/70">AI identifies table structure</p>
+                    <p className="font-semibold text-sm">Line Detection</p>
+                    <p className="text-xs text-primary-foreground/70">OpenCV finds table structure</p>
                   </div>
                 </div>
 
@@ -268,8 +280,8 @@ export default function TableScanPro() {
                     {status === 'completed' ? <CheckCircle2 size={16} /> : '3'}
                   </div>
                   <div className="flex-1">
-                    <p className="font-semibold text-sm">Extract & Export</p>
-                    <p className="text-xs text-primary-foreground/70">Get data in your favorite format</p>
+                    <p className="font-semibold text-sm">Tesseract OCR</p>
+                    <p className="text-xs text-primary-foreground/70">Extract text from each cell</p>
                   </div>
                 </div>
               </div>
@@ -279,12 +291,13 @@ export default function TableScanPro() {
                   className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
                   onClick={runOCR}
                 >
-                  Start AI Extraction <ChevronRight className="ml-2 w-5 h-5" />
+                  Process Table Now <ChevronRight className="ml-2 w-5 h-5" />
                 </Button>
               )}
               {status === 'ocr-processing' && (
                 <Button disabled className="w-full py-6 text-lg rounded-xl bg-secondary/50">
-                  <span className="animate-pulse">Processing...</span>
+                  <Loader2 className="mr-2 animate-spin" />
+                  <span>OCR Working...</span>
                 </Button>
               )}
             </CardContent>
@@ -330,13 +343,13 @@ export default function TableScanPro() {
           <Card className="border-none shadow-lg">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <AlertCircle className="text-muted-foreground w-5 h-5" /> Pro Tips
+                <AlertCircle className="text-muted-foreground w-5 h-5" /> Precision Tips
               </CardTitle>
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground space-y-2">
-              <p>• <b>Image Quality:</b> Ensure good lighting and straight alignment for better results.</p>
-              <p>• <b>Language:</b> Select the correct language to help the AI recognize specific characters.</p>
-              <p>• <b>Complex Tables:</b> Gemini handles nested headers and merged cells automatically.</p>
+              <p>• <b>Line Tuning:</b> OpenCV finds main lines, but you can manually add/move lines for wireless tables.</p>
+              <p>• <b>Language:</b> Select the correct language to load specific Tesseract training data.</p>
+              <p>• <b>Performance:</b> OCR runs cell-by-cell. For large tables, this may take a few moments.</p>
             </CardContent>
           </Card>
         </div>
@@ -348,12 +361,7 @@ export default function TableScanPro() {
             <CardHeader className="bg-muted/20 border-b flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-xl">Extraction Preview</CardTitle>
-                <CardDescription>Data extracted by Gemini Vision Pro</CardDescription>
-              </div>
-              <div className="flex gap-2">
-                <div className="px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold border border-primary/20">
-                  AI Model: Gemini 2.5 Flash
-                </div>
+                <CardDescription>Processed locally with Tesseract.js</CardDescription>
               </div>
             </CardHeader>
             <CardContent className="p-0 overflow-auto max-h-[600px]">
