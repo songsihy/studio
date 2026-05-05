@@ -9,6 +9,7 @@ import {
   Settings, 
   Languages, 
   ChevronRight,
+  ChevronLeft,
   RotateCcw,
   CheckCircle2,
   AlertCircle,
@@ -168,6 +169,16 @@ export default function TableScanPro() {
     } catch (error) {
       console.error(error);
       setStatus('error');
+    }
+  };
+
+  const goBack = () => {
+    if (status === 'selecting-tables') {
+      reset();
+    } else if (status === 'refining') {
+      setStatus('selecting-tables');
+    } else if (status === 'completed') {
+      setStatus('refining');
     }
   };
 
@@ -400,24 +411,47 @@ export default function TableScanPro() {
                   })}
                 </div>
 
-                {status === 'selecting-tables' && (
-                  <Button 
-                    className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
-                    onClick={proceedToRefine}
-                    disabled={isDetecting || tableRegions.length === 0}
-                  >
-                    Refine Grids <ChevronRight className="ml-2 w-5 h-5" />
-                  </Button>
-                )}
+                <div className="flex flex-col gap-3">
+                  <div className="flex gap-2">
+                    {status !== 'idle' && status !== 'ocr-processing' && (
+                      <Button 
+                        variant="outline"
+                        className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/20 py-6 rounded-xl"
+                        onClick={goBack}
+                      >
+                        <ChevronLeft className="mr-1 w-4 h-4" /> Back
+                      </Button>
+                    )}
 
-                {status === 'refining' && (
-                  <Button 
-                    className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
-                    onClick={runOCR}
-                  >
-                    Start OCR <ChevronRight className="ml-2 w-5 h-5" />
-                  </Button>
-                )}
+                    {status === 'selecting-tables' && (
+                      <Button 
+                        className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
+                        onClick={proceedToRefine}
+                        disabled={isDetecting || tableRegions.length === 0}
+                      >
+                        Next <ChevronRight className="ml-1 w-4 h-4" />
+                      </Button>
+                    )}
+
+                    {status === 'refining' && (
+                      <Button 
+                        className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
+                        onClick={runOCR}
+                      >
+                        Process <ChevronRight className="ml-1 w-4 h-4" />
+                      </Button>
+                    )}
+
+                    {status === 'completed' && (
+                      <Button 
+                        className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
+                        onClick={reset}
+                      >
+                        New File
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
