@@ -1,11 +1,77 @@
 
 import { createWorker, Worker } from 'tesseract.js';
-import { TableLine } from '@/lib/ocr-types';
+import { TableLine, TableRegion } from '@/lib/ocr-types';
 
 declare global {
   interface Window {
     cv: any;
   }
+}
+
+/**
+ * Detects potential table regions in an image using OpenCV.js contour detection.
+ */
+export async function detectTableRegions(imageSrc: string): Promise<TableRegion[]> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      try {
+        if (!window.cv) {
+          throw new Error('OpenCV.js not loaded');
+        }
+        const cv = window.cv;
+        const src = cv.imread(img);
+        const gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+
+        // Preprocessing for contour detection
+        const blurred = new cv.Mat();
+        cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+        
+        const thresh = new cv.Mat();
+        cv.adaptiveThreshold(blurred, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+
+        // Dilate to join broken lines
+        const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+        const dilated = new cv.Mat();
+        cv.dilate(thresh, dilated, kernel);
+
+        const contours = new cv.MatVector();
+        const hierarchy = new cv.Mat();
+        cv.findContours(dilated, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+        const detectedRegions: TableRegion[] = [];
+        const minArea = (src.cols * src.rows) * 0.01; // At least 1% of image area
+
+        for (let i = 0; i < contours.size(); ++i) {
+          const cnt = contours.get(i);
+          const rect = cv.boundingRect(cnt);
+          const area = rect.width * rect.height;
+
+          if (area > minArea) {
+            detectedRegions.push({
+              id: `auto-${Math.random().toString(36).substr(2, 9)}`,
+              x: (rect.x / src.cols) * 100,
+              y: (rect.y / src.rows) * 100,
+              width: (rect.width / src.cols) * 100,
+              height: (rect.height / src.rows) * 100
+            });
+          }
+        }
+
+        // Cleanup
+        src.delete(); gray.delete(); blurred.delete(); thresh.delete(); 
+        kernel.delete(); dilated.delete(); contours.delete(); hierarchy.delete();
+
+        resolve(detectedRegions);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = reject;
+    img.src = imageSrc;
+  });
 }
 
 /**

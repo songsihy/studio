@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   FileText, 
   Table as TableIcon, 
@@ -13,7 +13,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
-  ScanSearch
+  ScanSearch,
+  Sparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -43,7 +44,7 @@ import {
   SelectValue 
 } from "@/components/ui/select";
 import { Progress } from '@/components/ui/progress';
-import { detectLines, processTable } from '@/lib/ocr/processor';
+import { detectLines, processTable, detectTableRegions } from '@/lib/ocr/processor';
 import { pdfToImages } from '@/lib/ocr/pdf-loader';
 
 export default function TableScanPro() {
@@ -56,6 +57,7 @@ export default function TableScanPro() {
   const [tableRegions, setTableRegions] = useState<TableRegion[]>([]);
   const [progress, setProgress] = useState(0);
   const [extractedData, setExtractedData] = useState<ExtractedTable | null>(null);
+  const [isDetecting, setIsDetecting] = useState(false);
   const { toast } = useToast();
 
   const handleFiles = async (files: File[]) => {
@@ -90,9 +92,12 @@ export default function TableScanPro() {
       setCurrentPageIndex(0);
       setStatus('selecting-tables');
       
+      // Auto-detect regions once loaded
+      autoDetectRegions(allPageImages[0]);
+
       toast({
         title: "Documents Loaded",
-        description: `Successfully processed ${newPages.length} page(s). Now, identify the table regions.`,
+        description: `Successfully processed ${newPages.length} page(s). Analyzing for tables...`,
       });
     } catch (err) {
       console.error(err);
@@ -102,6 +107,23 @@ export default function TableScanPro() {
         title: "Upload Failed",
         description: "Could not process files. Ensure they are valid PDFs or images.",
       });
+    }
+  };
+
+  const autoDetectRegions = async (imageSrc: string) => {
+    if (!imageSrc) return;
+    setIsDetecting(true);
+    try {
+      const detected = await detectTableRegions(imageSrc);
+      setTableRegions(detected);
+      toast({
+        title: "Analysis Complete",
+        description: `Found ${detected.length} potential table regions. You can adjust them now.`,
+      });
+    } catch (err) {
+      console.warn("Auto-detection failed, proceed manually.", err);
+    } finally {
+      setIsDetecting(false);
     }
   };
 
@@ -190,6 +212,7 @@ export default function TableScanPro() {
     setHLines([]);
     setTableRegions([]);
     setProgress(0);
+    setIsDetecting(false);
   };
 
   return (
@@ -242,8 +265,13 @@ export default function TableScanPro() {
                     </CardTitle>
                   </div>
                   <div className="flex items-center gap-2 text-sm font-medium">
+                    {isDetecting && (
+                      <span className="flex items-center gap-1.5 text-primary animate-pulse">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Detecting Tables...
+                      </span>
+                    )}
                     <span className={status === 'ocr-processing' ? "text-primary" : "text-muted-foreground"}>
-                      {status === 'selecting-tables' && 'Click and drag to identify tables'}
+                      {status === 'selecting-tables' && !isDetecting && 'Adjust regions or draw new ones'}
                       {status === 'detecting' && 'Analyzing structure...'}
                       {status === 'refining' && 'Fine-tune lines'}
                       {status === 'ocr-processing' && `OCR: ${progress}%`}
@@ -316,12 +344,23 @@ export default function TableScanPro() {
               </div>
 
               {status === 'selecting-tables' && (
-                <Button 
-                  className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
-                  onClick={proceedToRefine}
-                >
-                  Analyze Regions <ScanSearch className="ml-2 w-5 h-5" />
-                </Button>
+                <div className="space-y-3">
+                   <Button 
+                    variant="outline"
+                    className="w-full bg-white/10 hover:bg-white/20 border-white/20 text-white font-semibold"
+                    onClick={() => autoDetectRegions(pages[currentPageIndex]?.originalImage)}
+                    disabled={isDetecting}
+                  >
+                    <Sparkles className="mr-2 w-4 h-4" /> Re-scan for Tables
+                  </Button>
+                  <Button 
+                    className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
+                    onClick={proceedToRefine}
+                    disabled={isDetecting}
+                  >
+                    Analyze Regions <ScanSearch className="ml-2 w-5 h-5" />
+                  </Button>
+                </div>
               )}
 
               {(status === 'refining' || status === 'error') && (
@@ -359,9 +398,9 @@ export default function TableScanPro() {
               </CardTitle>
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground space-y-2">
-              <p>• <b>Regions:</b> Drag on the image to define exactly where tables are located.</p>
+              <p>• <b>Regions:</b> OpenCV has detected tables automatically. Drag to add more or click (X) to remove.</p>
               <p>• <b>Wireless:</b> For tables without lines, add vertical/horizontal guides manually in Step 3.</p>
-              <p>• <b>PDFs:</b> Multi-page PDFs are converted to local images for maximum privacy.</p>
+              <p>• <b>Privacy:</b> All OCR and CV operations happen 100% on your device.</p>
             </CardContent>
           </Card>
         </div>
