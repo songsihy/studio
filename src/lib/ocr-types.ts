@@ -9,6 +9,7 @@ export interface TableLine {
 
 export interface TableRegion {
   id: string;
+  name: string; // Variable name for the table
   x: number; // percentage
   y: number; // percentage
   width: number; // percentage

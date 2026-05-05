@@ -52,6 +52,7 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
           if (area > minArea) {
             detectedRegions.push({
               id: `auto-${Math.random().toString(36).substr(2, 9)}`,
+              name: `table_${detectedRegions.length + 1}`,
               x: (rect.x / src.cols) * 100,
               y: (rect.y / src.rows) * 100,
               width: (rect.width / src.cols) * 100,
