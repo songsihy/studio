@@ -1,0 +1,17 @@
+
+{
+  "placeholderImages": [
+    {
+      "id": "landing-hero",
+      "description": "Abstract document scanning and data extraction concept",
+      "imageUrl": "https://picsum.photos/seed/scan1/1200/800",
+      "imageHint": "document scan"
+    },
+    {
+      "id": "table-example",
+      "description": "Clean financial table for OCR demonstration",
+      "imageUrl": "https://picsum.photos/seed/table2/800/600",
+      "imageHint": "financial table"
+    }
+  ]
+}
