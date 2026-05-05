@@ -14,7 +14,8 @@ import {
   AlertCircle,
   Loader2,
   ScanSearch,
-  Sparkles
+  Sparkles,
+  Files
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -46,6 +47,8 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { detectLines, processTable, detectTableRegions } from '@/lib/ocr/processor';
 import { pdfToImages } from '@/lib/ocr/pdf-loader';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
 
 export default function TableScanPro() {
   const [status, setStatus] = useState<ProcessingStatus>('idle');
@@ -59,6 +62,17 @@ export default function TableScanPro() {
   const [extractedData, setExtractedData] = useState<ExtractedTable | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
   const { toast } = useToast();
+
+  // Update the parent pages array when current page edits change
+  useEffect(() => {
+    if (pages.length > 0 && pages[currentPageIndex]) {
+      setPages(prev => prev.map((p, idx) => 
+        idx === currentPageIndex 
+          ? { ...p, tableRegions, verticalLines: vLines, horizontalLines: hLines }
+          : p
+      ));
+    }
+  }, [vLines, hLines, tableRegions]);
 
   const handleFiles = async (files: File[]) => {
     setStatus('uploading');
@@ -90,14 +104,17 @@ export default function TableScanPro() {
 
       setPages(newPages);
       setCurrentPageIndex(0);
+      setTableRegions([]);
+      setVLines([]);
+      setHLines([]);
       setStatus('selecting-tables');
       
-      // Auto-detect regions once loaded
+      // Auto-detect regions for the first page
       autoDetectRegions(allPageImages[0]);
 
       toast({
         title: "Documents Loaded",
-        description: `Successfully processed ${newPages.length} page(s). Analyzing for tables...`,
+        description: `Successfully processed ${newPages.length} page(s).`,
       });
     } catch (err) {
       console.error(err);
@@ -110,16 +127,29 @@ export default function TableScanPro() {
     }
   };
 
+  const handlePageSelect = (index: number) => {
+    if (index === currentPageIndex) return;
+    
+    const targetPage = pages[index];
+    if (targetPage) {
+      setCurrentPageIndex(index);
+      setVLines(targetPage.verticalLines || []);
+      setHLines(targetPage.horizontalLines || []);
+      setTableRegions(targetPage.tableRegions || []);
+      
+      // If we are in selection mode and the new page has no regions, auto-detect
+      if (status === 'selecting-tables' && targetPage.tableRegions.length === 0) {
+        autoDetectRegions(targetPage.originalImage);
+      }
+    }
+  };
+
   const autoDetectRegions = async (imageSrc: string) => {
     if (!imageSrc) return;
     setIsDetecting(true);
     try {
       const detected = await detectTableRegions(imageSrc);
       setTableRegions(detected);
-      toast({
-        title: "Analysis Complete",
-        description: `Found ${detected.length} potential table regions. You can adjust them now.`,
-      });
     } catch (err) {
       console.warn("Auto-detection failed, proceed manually.", err);
     } finally {
@@ -133,7 +163,6 @@ export default function TableScanPro() {
 
     setStatus('detecting');
     try {
-      // For simplicity, we detect lines for the whole image or the first selected region
       const { vLines: detectedV, hLines: detectedH } = await detectLines(currentPage.originalImage);
       setVLines(detectedV);
       setHLines(detectedH);
@@ -211,6 +240,7 @@ export default function TableScanPro() {
     setVLines([]);
     setHLines([]);
     setTableRegions([]);
+    setCurrentPageIndex(0);
     setProgress(0);
     setIsDetecting(false);
   };
@@ -250,8 +280,51 @@ export default function TableScanPro() {
         </div>
       </header>
 
-      <main className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        <div className="lg:col-span-8 space-y-6">
+      <main className={cn(
+        "grid gap-8",
+        status === 'idle' ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-12"
+      )}>
+        {/* Page Gallery Sidebar */}
+        {status !== 'idle' && pages.length > 0 && (
+          <aside className="lg:col-span-2 space-y-4">
+            <div className="flex items-center gap-2 px-1 text-sm font-semibold text-muted-foreground">
+              <Files size={16} /> Pages ({pages.length})
+            </div>
+            <ScrollArea className="h-[calc(100vh-250px)] pr-4">
+              <div className="flex flex-col gap-3">
+                {pages.map((page, idx) => (
+                  <button
+                    key={page.id}
+                    onClick={() => handlePageSelect(idx)}
+                    className={cn(
+                      "relative aspect-[3/4] rounded-lg border-2 overflow-hidden transition-all group",
+                      currentPageIndex === idx 
+                        ? "border-primary shadow-md ring-2 ring-primary/20" 
+                        : "border-transparent hover:border-muted-foreground/30"
+                    )}
+                  >
+                    <img 
+                      src={page.originalImage} 
+                      alt={`Page ${idx + 1}`} 
+                      className="w-full h-full object-cover"
+                    />
+                    <div className={cn(
+                      "absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/60 text-[10px] font-bold text-white",
+                      currentPageIndex === idx ? "bg-primary" : ""
+                    )}>
+                      {idx + 1}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </ScrollArea>
+          </aside>
+        )}
+
+        <div className={cn(
+          "space-y-6",
+          status === 'idle' ? "w-full" : "lg:col-span-7"
+        )}>
           {status === 'idle' ? (
             <DropZone onFilesSelected={handleFiles} isLoading={status === 'uploading'} />
           ) : (
@@ -271,7 +344,7 @@ export default function TableScanPro() {
                       </span>
                     )}
                     <span className={status === 'ocr-processing' ? "text-primary" : "text-muted-foreground"}>
-                      {status === 'selecting-tables' && !isDetecting && 'Adjust regions or draw new ones'}
+                      {status === 'selecting-tables' && !isDetecting && 'Mark table areas'}
                       {status === 'detecting' && 'Analyzing structure...'}
                       {status === 'refining' && 'Fine-tune lines'}
                       {status === 'ocr-processing' && `OCR: ${progress}%`}
@@ -307,103 +380,105 @@ export default function TableScanPro() {
           )}
         </div>
 
-        <div className="lg:col-span-4 space-y-6">
-          <Card className="border-none shadow-lg bg-primary text-primary-foreground">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <Settings size={22} /> Workflow
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-4">
-                {[
-                  { id: 'uploading', label: 'Upload Document', desc: 'PDF or Image' },
-                  { id: 'selecting-tables', label: 'Identify Tables', desc: 'Mark table areas' },
-                  { id: 'refining', label: 'Line Detection', desc: 'Refine wireless lines' },
-                  { id: 'ocr-processing', label: 'Tesseract OCR', desc: 'Local extraction' }
-                ].map((step, idx) => {
-                  const isPast = status === 'completed' || 
-                    (step.id === 'uploading' && status !== 'idle') ||
-                    (step.id === 'selecting-tables' && (status === 'refining' || status === 'ocr-processing')) ||
-                    (step.id === 'refining' && status === 'ocr-processing');
-                  
-                  const isCurrent = status === step.id || (step.id === 'refining' && status === 'detecting');
-
-                  return (
-                    <div key={step.id} className="flex items-start gap-3">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isPast || isCurrent ? 'bg-secondary text-secondary-foreground' : 'bg-primary-foreground/20 text-white'}`}>
-                        {isPast ? <CheckCircle2 size={16} /> : (idx + 1)}
-                      </div>
-                      <div className="flex-1">
-                        <p className={`font-semibold text-sm ${isCurrent ? 'text-white' : 'text-primary-foreground/70'}`}>{step.label}</p>
-                        <p className="text-xs text-primary-foreground/50">{step.desc}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {status === 'selecting-tables' && (
-                <div className="space-y-3">
-                   <Button 
-                    variant="outline"
-                    className="w-full bg-white/10 hover:bg-white/20 border-white/20 text-white font-semibold"
-                    onClick={() => autoDetectRegions(pages[currentPageIndex]?.originalImage)}
-                    disabled={isDetecting}
-                  >
-                    <Sparkles className="mr-2 w-4 h-4" /> Re-scan for Tables
-                  </Button>
-                  <Button 
-                    className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
-                    onClick={proceedToRefine}
-                    disabled={isDetecting}
-                  >
-                    Analyze Regions <ScanSearch className="ml-2 w-5 h-5" />
-                  </Button>
-                </div>
-              )}
-
-              {(status === 'refining' || status === 'error') && (
-                <Button 
-                  className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
-                  onClick={runOCR}
-                >
-                  Start OCR <ChevronRight className="ml-2 w-5 h-5" />
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-
-          {extractedData && (
-            <Card className="border-none shadow-lg overflow-hidden">
-              <CardHeader className="bg-secondary/10">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Download className="text-secondary w-5 h-5" /> Export Data
+        {status !== 'idle' && (
+          <div className="lg:col-span-3 space-y-6">
+            <Card className="border-none shadow-lg bg-primary text-primary-foreground">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <Settings size={22} /> Workflow
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-4 grid grid-cols-2 gap-3">
-                {['csv', 'json', 'md', 'html'].map((fmt) => (
-                  <Button key={fmt} variant="outline" className="justify-start border-2 hover:border-primary" onClick={() => handleExport(fmt as any)}>
-                    <span className="uppercase text-xs font-bold">{fmt}</span>
+              <CardContent className="space-y-6">
+                <div className="space-y-4">
+                  {[
+                    { id: 'uploading', label: 'Upload Document', desc: 'PDF or Image' },
+                    { id: 'selecting-tables', label: 'Identify Tables', desc: 'Mark table areas' },
+                    { id: 'refining', label: 'Line Detection', desc: 'Refine wireless lines' },
+                    { id: 'ocr-processing', label: 'Tesseract OCR', desc: 'Local extraction' }
+                  ].map((step, idx) => {
+                    const isPast = status === 'completed' || 
+                      (step.id === 'uploading' && status !== 'idle') ||
+                      (step.id === 'selecting-tables' && (status === 'refining' || status === 'ocr-processing')) ||
+                      (step.id === 'refining' && status === 'ocr-processing');
+                    
+                    const isCurrent = status === step.id || (step.id === 'refining' && status === 'detecting');
+
+                    return (
+                      <div key={step.id} className="flex items-start gap-3">
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isPast || isCurrent ? 'bg-secondary text-secondary-foreground' : 'bg-primary-foreground/20 text-white'}`}>
+                          {isPast ? <CheckCircle2 size={16} /> : (idx + 1)}
+                        </div>
+                        <div className="flex-1">
+                          <p className={`font-semibold text-sm ${isCurrent ? 'text-white' : 'text-primary-foreground/70'}`}>{step.label}</p>
+                          <p className="text-xs text-primary-foreground/50">{step.desc}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {status === 'selecting-tables' && (
+                  <div className="space-y-3">
+                    <Button 
+                      variant="outline"
+                      className="w-full bg-white/10 hover:bg-white/20 border-white/20 text-white font-semibold"
+                      onClick={() => autoDetectRegions(pages[currentPageIndex]?.originalImage)}
+                      disabled={isDetecting}
+                    >
+                      <Sparkles className="mr-2 w-4 h-4" /> Re-scan Page {currentPageIndex + 1}
+                    </Button>
+                    <Button 
+                      className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
+                      onClick={proceedToRefine}
+                      disabled={isDetecting}
+                    >
+                      Analyze Regions <ScanSearch className="ml-2 w-5 h-5" />
+                    </Button>
+                  </div>
+                )}
+
+                {(status === 'refining' || status === 'error') && (
+                  <Button 
+                    className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
+                    onClick={runOCR}
+                  >
+                    Start OCR <ChevronRight className="ml-2 w-5 h-5" />
                   </Button>
-                ))}
+                )}
               </CardContent>
             </Card>
-          )}
 
-          <Card className="border-none shadow-lg">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <AlertCircle className="text-muted-foreground w-5 h-5" /> Tips
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-xs text-muted-foreground space-y-2">
-              <p>• <b>Regions:</b> OpenCV has detected tables automatically. Drag to add more or click (X) to remove.</p>
-              <p>• <b>Wireless:</b> For tables without lines, add vertical/horizontal guides manually in Step 3.</p>
-              <p>• <b>Privacy:</b> All OCR and CV operations happen 100% on your device.</p>
-            </CardContent>
-          </Card>
-        </div>
+            {extractedData && (
+              <Card className="border-none shadow-lg overflow-hidden">
+                <CardHeader className="bg-secondary/10">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Download className="text-secondary w-5 h-5" /> Export Data
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-4 grid grid-cols-2 gap-3">
+                  {['csv', 'json', 'md', 'html'].map((fmt) => (
+                    <Button key={fmt} variant="outline" className="justify-start border-2 hover:border-primary" onClick={() => handleExport(fmt as any)}>
+                      <span className="uppercase text-xs font-bold">{fmt}</span>
+                    </Button>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            <Card className="border-none shadow-lg">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <AlertCircle className="text-muted-foreground w-5 h-5" /> Tips
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs text-muted-foreground space-y-2">
+                <p>• <b>Multi-Page:</b> Use the left sidebar to switch between document pages.</p>
+                <p>• <b>Regions:</b> Adjust detected tables or draw new ones manually.</p>
+                <p>• <b>Wireless:</b> For tables without lines, add vertical/horizontal guides manually in Step 3.</p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </main>
 
       {extractedData && (
