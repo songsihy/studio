@@ -11,8 +11,10 @@ export interface PreprocessingOptions {
   binarize: boolean;
   deskew: boolean;
   denoise: boolean;
-  thresholdBlockSize: number;
-  thresholdC: number;
+  thresholdMethod: 'global' | 'adaptive';
+  thresholdValue: number; // For global thresholding
+  thresholdBlockSize: number; // For adaptive thresholding
+  thresholdC: number; // For adaptive thresholding
   thresholdMaxValue: number;
   adaptiveMethod: 'mean' | 'gaussian';
   thresholdType: 'binary' | 'binary_inv';

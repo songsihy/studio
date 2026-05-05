@@ -63,6 +63,8 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
                 binarize: true,
                 deskew: true,
                 denoise: true,
+                thresholdMethod: 'adaptive',
+                thresholdValue: 128,
                 thresholdBlockSize: 31,
                 thresholdC: 2,
                 thresholdMaxValue: 255,
@@ -96,6 +98,8 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       binarize: true, 
       deskew: true, 
       denoise: true,
+      thresholdMethod: 'adaptive',
+      thresholdValue: 128,
       thresholdBlockSize: 31,
       thresholdC: 2,
       thresholdMaxValue: 255,
@@ -145,22 +149,26 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 
     if (opts.binarize) {
       const binary = new cv.Mat();
-      // Use user-defined block size (must be odd)
-      const blockSize = Math.max(3, opts.thresholdBlockSize % 2 === 0 ? opts.thresholdBlockSize + 1 : opts.thresholdBlockSize);
-      
-      const adaptiveMethod = opts.adaptiveMethod === 'mean' ? cv.ADAPTIVE_THRESH_MEAN_C : cv.ADAPTIVE_THRESH_GAUSSIAN_C;
       const thresholdType = opts.thresholdType === 'binary_inv' ? cv.THRESH_BINARY_INV : cv.THRESH_BINARY;
       const maxValue = opts.thresholdMaxValue || 255;
 
-      cv.adaptiveThreshold(
-        current, 
-        binary, 
-        maxValue, 
-        adaptiveMethod, 
-        thresholdType, 
-        blockSize, 
-        opts.thresholdC
-      );
+      if (opts.thresholdMethod === 'global') {
+        cv.threshold(current, binary, opts.thresholdValue, maxValue, thresholdType);
+      } else {
+        // Use user-defined block size (must be odd)
+        const blockSize = Math.max(3, opts.thresholdBlockSize % 2 === 0 ? opts.thresholdBlockSize + 1 : opts.thresholdBlockSize);
+        const adaptiveMethod = opts.adaptiveMethod === 'mean' ? cv.ADAPTIVE_THRESH_MEAN_C : cv.ADAPTIVE_THRESH_GAUSSIAN_C;
+
+        cv.adaptiveThreshold(
+          current, 
+          binary, 
+          maxValue, 
+          adaptiveMethod, 
+          thresholdType, 
+          blockSize, 
+          opts.thresholdC
+        );
+      }
       current.delete();
       current = binary;
     }
@@ -181,6 +189,8 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
   const data = imageData.data;
   
   // Simple global thresholding logic for Canvas fallback
+  const method = options?.thresholdMethod || 'adaptive';
+  const threshVal = options?.thresholdValue || 128;
   const C = options?.thresholdC !== undefined ? options.thresholdC * 5 : 10;
   const inv = options?.thresholdType === 'binary_inv';
 
@@ -189,7 +199,10 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
     const g = data[i + 1];
     const b = data[i + 2];
     const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-    let val = luminance > (180 - C) ? 255 : 0;
+    
+    let target = method === 'global' ? threshVal : (180 - C);
+    let val = luminance > target ? 255 : 0;
+    
     if (inv) val = 255 - val;
     data[i] = data[i + 1] = data[i + 2] = val;
   }
