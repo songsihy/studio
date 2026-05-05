@@ -18,7 +18,9 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
     img.onload = () => {
       try {
         if (!window.cv || !window.cv.imread) {
-          throw new Error('OpenCV.js not loaded');
+          console.warn('OpenCV.js not loaded. Skipping auto-detection.');
+          resolve([]);
+          return;
         }
         const cv = window.cv;
         const src = cv.imread(img);
@@ -66,66 +68,68 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 
         resolve(detectedRegions);
       } catch (err) {
-        reject(err);
+        console.error("Region detection error:", err);
+        resolve([]);
       }
     };
-    img.onerror = reject;
+    img.onerror = () => resolve([]);
     img.src = imageSrc;
   });
 }
 
 /**
  * Advanced image pre-processing for a region mat.
- * Includes: Denoising, Deskewing, Binarization, and Thinning.
  */
 function preprocessMatForOcr(cv: any, src: any): any {
-  const gray = new cv.Mat();
-  if (src.channels() > 1) {
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-  } else {
-    src.copyTo(gray);
-  }
-
-  const denoised = new cv.Mat();
-  cv.medianBlur(gray, denoised, 3);
-
-  const threshForSkew = new cv.Mat();
-  cv.threshold(denoised, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-  
-  const points = new cv.Mat();
-  cv.findNonZero(threshForSkew, points);
-  
-  let deskewed = new cv.Mat();
-  if (!points.empty()) {
-    const box = cv.minAreaRect(points);
-    let angle = box.angle;
-    
-    if (angle < -45) {
-      angle = angle + 90;
+  try {
+    const gray = new cv.Mat();
+    if (src.channels() > 1) {
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    } else {
+      src.copyTo(gray);
     }
+
+    const denoised = new cv.Mat();
+    cv.medianBlur(gray, denoised, 3);
+
+    const threshForSkew = new cv.Mat();
+    cv.threshold(denoised, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
     
-    if (Math.abs(angle) > 0.5) {
-      const center = new cv.Point(denoised.cols / 2, denoised.rows / 2);
-      const M = cv.getRotationMatrix2D(center, angle, 1.0);
-      cv.warpAffine(denoised, deskewed, M, new cv.Size(denoised.cols, denoised.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
-      M.delete();
+    const points = new cv.Mat();
+    cv.findNonZero(threshForSkew, points);
+    
+    let deskewed = new cv.Mat();
+    if (!points.empty()) {
+      const box = cv.minAreaRect(points);
+      let angle = box.angle;
+      if (angle < -45) angle = angle + 90;
+      
+      if (Math.abs(angle) > 0.5) {
+        const center = new cv.Point(denoised.cols / 2, denoised.rows / 2);
+        const M = cv.getRotationMatrix2D(center, angle, 1.0);
+        cv.warpAffine(denoised, deskewed, M, new cv.Size(denoised.cols, denoised.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+        M.delete();
+      } else {
+        denoised.copyTo(deskewed);
+      }
     } else {
       denoised.copyTo(deskewed);
     }
-  } else {
-    denoised.copyTo(deskewed);
+
+    const binary = new cv.Mat();
+    cv.adaptiveThreshold(deskewed, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+
+    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 1));
+    const processed = new cv.Mat();
+    cv.morphologyEx(binary, processed, cv.MORPH_CLOSE, kernel);
+
+    gray.delete(); denoised.delete(); threshForSkew.delete(); points.delete(); deskewed.delete(); binary.delete(); kernel.delete();
+
+    return processed;
+  } catch (e) {
+    console.warn("Preprocessing failed, returning original ROI", e);
+    return src.clone();
   }
-
-  const binary = new cv.Mat();
-  cv.adaptiveThreshold(deskewed, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
-
-  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 1));
-  const processed = new cv.Mat();
-  cv.morphologyEx(binary, processed, cv.MORPH_CLOSE, kernel);
-
-  gray.delete(); denoised.delete(); threshForSkew.delete(); points.delete(); deskewed.delete(); binary.delete(); kernel.delete();
-
-  return processed;
 }
 
 /**
@@ -192,16 +196,16 @@ async function detectLinesForRoi(cv: any, binary: any, region: TableRegion): Pro
   };
 }
 
-/**
- * Detects lines within specific table regions.
- */
 export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[]): Promise<TableRegion[]> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     img.onload = async () => {
       try {
-        if (!window.cv || !window.cv.imread) throw new Error('OpenCV.js not loaded');
+        if (!window.cv || !window.cv.imread) {
+          resolve(regions);
+          return;
+        }
         const cv = window.cv;
         const src = cv.imread(img);
         const gray = new cv.Mat();
@@ -212,34 +216,31 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
         const updatedRegions = [];
         for (const region of regions) {
           const { vLines, hLines } = await detectLinesForRoi(cv, binary, region);
-          updatedRegions.push({
-            ...region,
-            verticalLines: vLines,
-            horizontalLines: hLines
-          });
+          updatedRegions.push({ ...region, verticalLines: vLines, horizontalLines: hLines });
         }
 
         src.delete(); gray.delete(); binary.delete();
         resolve(updatedRegions);
       } catch (err) {
-        reject(err);
+        console.error("Line detection error:", err);
+        resolve(regions);
       }
     };
-    img.onerror = reject;
+    img.onerror = () => resolve(regions);
     img.src = imageSrc;
   });
 }
 
-/**
- * Detects lines in a single region (used for refinement).
- */
 export async function detectLinesInSingleRegion(imageSrc: string, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     img.onload = async () => {
       try {
-        if (!window.cv || !window.cv.imread) throw new Error('OpenCV.js not loaded');
+        if (!window.cv || !window.cv.imread) {
+          resolve({ vLines: region.verticalLines || [], hLines: region.horizontalLines || [] });
+          return;
+        }
         const cv = window.cv;
         const src = cv.imread(img);
         const gray = new cv.Mat();
@@ -252,16 +253,16 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         src.delete(); gray.delete(); binary.delete();
         resolve(lines);
       } catch (err) {
-        reject(err);
+        resolve({ vLines: region.verticalLines || [], hLines: region.horizontalLines || [] });
       }
     };
-    img.onerror = reject;
+    img.onerror = () => resolve({ vLines: region.verticalLines || [], hLines: region.horizontalLines || [] });
     img.src = imageSrc;
   });
 }
 
 /**
- * Process all tables on a page using Tesseract.js with OpenCV preprocessing
+ * Process all tables on a page using Tesseract.js with OpenCV preprocessing fallback
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -276,10 +277,15 @@ export async function processTablesOnPage(
   await new Promise(resolve => img.onload = resolve);
 
   const cv = window.cv;
-  if (!cv || !cv.imread) {
-    throw new Error('OpenCV.js is not initialized yet. Please wait a moment.');
+  const useCv = !!(cv && cv.imread);
+  let srcMat: any = null;
+  if (useCv) {
+    try {
+      srcMat = cv.imread(img);
+    } catch (e) {
+      console.warn("OpenCV imread failed, falling back to pure canvas", e);
+    }
   }
-  const srcMat = cv.imread(img);
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -298,26 +304,29 @@ export async function processTablesOnPage(
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
 
-    let tableX = Math.floor((region.x / 100) * srcMat.cols);
-    let tableY = Math.floor((region.y / 100) * srcMat.rows);
-    let tableW = Math.floor((region.width / 100) * srcMat.cols);
-    let tableH = Math.floor((region.height / 100) * srcMat.rows);
-
-    tableX = Math.max(0, tableX);
-    tableY = Math.max(0, tableY);
-    tableW = Math.min(srcMat.cols - tableX, tableW);
-    tableH = Math.min(srcMat.rows - tableY, tableH);
-
-    const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
-    const regionMat = srcMat.roi(regionRect);
-    
-    const processedRegionMat = preprocessMatForOcr(cv, regionMat);
-    
     const tempCanvas = document.createElement('canvas');
-    cv.imshow(tempCanvas, processedRegionMat);
+    if (useCv && srcMat) {
+      try {
+        let tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
+        let tableY = Math.max(0, Math.floor((region.y / 100) * srcMat.rows));
+        let tableW = Math.min(srcMat.cols - tableX, Math.floor((region.width / 100) * srcMat.cols));
+        let tableH = Math.min(srcMat.rows - tableY, Math.floor((region.height / 100) * srcMat.rows));
+
+        const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
+        const regionMat = srcMat.roi(regionRect);
+        const processedRegionMat = preprocessMatForOcr(cv, regionMat);
+        cv.imshow(tempCanvas, processedRegionMat);
+        regionMat.delete();
+        processedRegionMat.delete();
+      } catch (e) {
+        console.error("Advanced CV processing failed for region, using fallback", e);
+        fallbackToCanvas(img, region, tempCanvas);
+      }
+    } else {
+      fallbackToCanvas(img, region, tempCanvas);
+    }
 
     const rows: string[][] = [];
-
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
       for (let j = 0; j < vCoords.length - 1; j++) {
@@ -326,7 +335,7 @@ export async function processTablesOnPage(
         const w = ((vCoords[j + 1] - vCoords[j]) / 100) * tempCanvas.width;
         const h = ((hCoords[i + 1] - hCoords[i]) / 100) * tempCanvas.height;
 
-        if (w > 0 && h > 0) {
+        if (w > 1 && h > 1) {
           canvas.width = w;
           canvas.height = h;
           ctx.drawImage(tempCanvas, x, y, w, h, 0, 0, w, h);
@@ -348,12 +357,21 @@ export async function processTablesOnPage(
       headers: rows[0] || [],
       rows: rows
     });
-
-    regionMat.delete();
-    processedRegionMat.delete();
   }
 
-  srcMat.delete();
+  if (srcMat) srcMat.delete();
   await worker.terminate();
   return allResults;
+}
+
+function fallbackToCanvas(img: HTMLImageElement, region: TableRegion, canvas: HTMLCanvasElement) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const x = (region.x / 100) * img.width;
+  const y = (region.y / 100) * img.height;
+  const w = (region.width / 100) * img.width;
+  const h = (region.height / 100) * img.height;
+  canvas.width = w;
+  canvas.height = h;
+  ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
 }

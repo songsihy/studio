@@ -100,7 +100,17 @@ export default function TableScanPro() {
   }, [currentPageIndex]);
 
   const autoDetectRegions = useCallback(async (imageSrc: string) => {
-    if (!imageSrc || !isCvLoaded) return;
+    if (!imageSrc) return;
+    
+    // Fallback if OpenCV not ready
+    if (!isCvLoaded) {
+      toast({
+        title: "Waiting for System",
+        description: "OpenCV.js is still loading. Please wait a moment...",
+      });
+      return;
+    }
+
     setIsDetecting(true);
     try {
       const detected = await detectTableRegions(imageSrc);
@@ -206,15 +216,6 @@ export default function TableScanPro() {
         variant: "destructive",
         title: "No Language Selected",
         description: "Please select at least one language for OCR.",
-      });
-      return;
-    }
-
-    if (!isCvLoaded) {
-      toast({
-        variant: "destructive",
-        title: "System Not Ready",
-        description: "OpenCV.js is still initializing. Please wait.",
       });
       return;
     }
@@ -410,7 +411,7 @@ export default function TableScanPro() {
                       size="sm" 
                       className="h-8 gap-2 bg-background shadow-sm hover:bg-secondary/10"
                       onClick={() => currentPage && autoDetectRegions(currentPage.originalImage)}
-                      disabled={isDetecting || !isCvLoaded}
+                      disabled={isDetecting}
                     >
                       {isDetecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4 text-secondary" />}
                       {isCvLoaded ? "Auto-Detect" : "Initializing..."}
@@ -579,9 +580,9 @@ export default function TableScanPro() {
                       <Button 
                         className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
                         onClick={runOCR}
-                        disabled={selectedLangs.length === 0 || !isCvLoaded}
+                        disabled={selectedLangs.length === 0}
                       >
-                        {isCvLoaded ? "Process" : "Initializing..."} <ChevronRight className="ml-1 w-4 h-4" />
+                        Process <ChevronRight className="ml-1 w-4 h-4" />
                       </Button>
                     )}
 
