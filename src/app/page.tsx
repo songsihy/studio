@@ -65,14 +65,14 @@ export default function TableScanPro() {
 
   const currentPage = pages[currentPageIndex];
 
-  // Keep local tableRegions synced with the current page in the pages array
+  // Keep local tableRegions synced with the current page in the pages array during step 2
   useEffect(() => {
-    if (pages.length > 0 && currentPage) {
+    if (status === 'selecting-tables' && pages.length > 0 && currentPage) {
       setPages(prev => prev.map((p, idx) => 
         idx === currentPageIndex ? { ...p, tableRegions } : p
       ));
     }
-  }, [tableRegions]);
+  }, [tableRegions, status]);
 
   const handleFiles = async (files: File[]) => {
     setStatus('uploading');
@@ -141,11 +141,19 @@ export default function TableScanPro() {
   };
 
   const proceedToRefine = async () => {
-    if (!currentPage) return;
     setStatus('detecting');
     try {
-      const updatedRegions = await detectLinesInRegions(currentPage.originalImage, tableRegions);
-      setTableRegions(updatedRegions);
+      const updatedPages = [...pages];
+      for (let i = 0; i < updatedPages.length; i++) {
+        const page = updatedPages[i];
+        if (page.tableRegions.length > 0) {
+          const regionsWithLines = await detectLinesInRegions(page.originalImage, page.tableRegions);
+          updatedPages[i] = { ...page, tableRegions: regionsWithLines };
+        }
+      }
+      setPages(updatedPages);
+      // Update local state for the current view
+      setTableRegions(updatedPages[currentPageIndex].tableRegions);
       setStatus('refining');
     } catch (err) {
       console.warn("Grid detection limited:", err);
@@ -154,17 +162,28 @@ export default function TableScanPro() {
   };
 
   const runOCR = async () => {
-    if (!currentPage) return;
     setStatus('ocr-processing');
     setProgress(0);
     try {
-      const results = await processTablesOnPage(
-        currentPage.originalImage, 
-        tableRegions, 
-        language,
-        (p) => setProgress(Math.floor(p * 100))
-      );
-      setAllExtractedData(results);
+      let finalResults: ExtractedTable[] = [];
+      const totalRegions = pages.reduce((acc, p) => acc + (p.tableRegions?.length || 0), 0);
+      let processedRegions = 0;
+
+      for (const page of pages) {
+        if (page.tableRegions.length > 0) {
+          const pageResults = await processTablesOnPage(
+            page.originalImage, 
+            page.tableRegions, 
+            language,
+            () => {} // Intermediate progress per page is handled by global processedRegions
+          );
+          finalResults = [...finalResults, ...pageResults];
+          processedRegions++;
+          setProgress(Math.floor((processedRegions / totalRegions) * 100));
+        }
+      }
+      
+      setAllExtractedData(finalResults);
       setStatus('completed');
     } catch (error) {
       console.error(error);
@@ -183,6 +202,15 @@ export default function TableScanPro() {
   };
 
   const updateRegionLines = (id: string, vLines: TableLine[], hLines: TableLine[]) => {
+    // Update global pages state
+    setPages(prev => prev.map(p => ({
+      ...p,
+      tableRegions: p.tableRegions.map(r => 
+        r.id === id ? { ...r, verticalLines: vLines, horizontalLines: hLines } : r
+      )
+    })));
+
+    // Sync local tableRegions state
     setTableRegions(prev => prev.map(r => 
       r.id === id ? { ...r, verticalLines: vLines, horizontalLines: hLines } : r
     ));
@@ -300,24 +328,28 @@ export default function TableScanPro() {
                       <Grid3X3 className="text-primary w-6 h-6" />
                       <div>
                         <h2 className="font-bold text-lg">Step 3: Refine Table Grids</h2>
-                        <p className="text-xs text-muted-foreground">Adjust lines for each detected table individually</p>
+                        <p className="text-xs text-muted-foreground">Adjust lines for all identified tables across all pages</p>
                       </div>
                     </div>
                   </div>
                   
                   <div className="space-y-8">
-                    {tableRegions.map((region, idx) => (
-                      <LineEditor 
-                        key={region.id}
-                        title={region.name || `Table #${idx + 1}`}
-                        imageSrc={currentPage?.originalImage || null}
-                        cropRect={region}
-                        vLines={region.verticalLines || []}
-                        hLines={region.horizontalLines || []}
-                        onLinesChange={(v, h) => updateRegionLines(region.id, v, h)}
-                      />
+                    {pages.map((page, pIdx) => (
+                      <React.Fragment key={page.id}>
+                        {(page.tableRegions || []).map((region, rIdx) => (
+                          <LineEditor 
+                            key={region.id}
+                            title={`${region.name || `Table ${rIdx + 1}`} (Page ${pIdx + 1})`}
+                            imageSrc={page.originalImage}
+                            cropRect={region}
+                            vLines={region.verticalLines || []}
+                            hLines={region.horizontalLines || []}
+                            onLinesChange={(v, h) => updateRegionLines(region.id, v, h)}
+                          />
+                        ))}
+                      </React.Fragment>
                     ))}
-                    {tableRegions.length === 0 && (
+                    {pages.every(p => (p.tableRegions?.length || 0) === 0) && (
                       <div className="p-12 text-center border-2 border-dashed rounded-xl bg-muted/5">
                         <p className="text-muted-foreground">No tables identified. Go back and draw regions.</p>
                       </div>
