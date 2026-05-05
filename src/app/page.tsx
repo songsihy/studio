@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   FileText, 
   Table as TableIcon, 
@@ -72,12 +72,14 @@ export default function TableScanPro() {
   const [pages, setPages] = useState<DocumentPage[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [selectedLangs, setSelectedLangs] = useState<string[]>(['eng', 'chi_tra', 'chi_sim']);
-  const [tableRegions, setTableRegions] = useState<TableRegion[]>([]);
   const [progress, setProgress] = useState(0);
   const [allExtractedData, setAllExtractedData] = useState<ExtractedTable[]>([]);
   const [isDetecting, setIsDetecting] = useState(false);
   const [isCvLoaded, setIsCvLoaded] = useState(false);
   const { toast } = useToast();
+
+  // Ref to track which page IDs we've already tried to auto-detect to avoid infinite loops
+  const autoDetectedPages = useRef<Set<string>>(new Set());
 
   const currentPage = pages[currentPageIndex];
 
@@ -92,20 +94,18 @@ export default function TableScanPro() {
     return () => clearInterval(checkCv);
   }, []);
 
-  useEffect(() => {
-    if (status === 'selecting-tables' && pages.length > 0 && currentPage) {
-      setPages(prev => prev.map((p, idx) => 
-        idx === currentPageIndex ? { ...p, tableRegions } : p
-      ));
-    }
-  }, [tableRegions, status, currentPageIndex, pages.length, currentPage]);
+  const updateCurrentPageRegions = useCallback((newRegions: TableRegion[]) => {
+    setPages(prev => prev.map((p, idx) => 
+      idx === currentPageIndex ? { ...p, tableRegions: newRegions } : p
+    ));
+  }, [currentPageIndex]);
 
   const autoDetectRegions = useCallback(async (imageSrc: string) => {
     if (!imageSrc || !isCvLoaded) return;
     setIsDetecting(true);
     try {
       const detected = await detectTableRegions(imageSrc);
-      setTableRegions(detected);
+      updateCurrentPageRegions(detected);
       if (detected.length > 0) {
         toast({
           title: "Detection Complete",
@@ -127,14 +127,17 @@ export default function TableScanPro() {
     } finally {
       setIsDetecting(false);
     }
-  }, [isCvLoaded, toast]);
+  }, [isCvLoaded, toast, updateCurrentPageRegions]);
 
-  // Reactive trigger when CV loads
+  // Reactive trigger when CV loads or page changes, but only once per page
   useEffect(() => {
-    if (isCvLoaded && status === 'selecting-tables' && tableRegions.length === 0 && currentPage) {
-      autoDetectRegions(currentPage.originalImage);
+    if (isCvLoaded && status === 'selecting-tables' && currentPage && (currentPage.tableRegions?.length || 0) === 0) {
+      if (!autoDetectedPages.current.has(currentPage.id)) {
+        autoDetectedPages.current.add(currentPage.id);
+        autoDetectRegions(currentPage.originalImage);
+      }
     }
-  }, [isCvLoaded, status, tableRegions.length, currentPage, autoDetectRegions]);
+  }, [isCvLoaded, status, currentPage?.id, autoDetectRegions]);
 
   const handleFiles = async (files: File[]) => {
     setStatus('uploading');
@@ -162,14 +165,9 @@ export default function TableScanPro() {
 
       setPages(newPages);
       setCurrentPageIndex(0);
-      setTableRegions([]);
+      autoDetectedPages.current.clear();
       setStatus('selecting-tables');
       
-      // Attempt auto-detect immediately if CV is already ready
-      if (isCvLoaded) {
-        autoDetectRegions(allPageImages[0]);
-      }
-
       toast({
         title: "Documents Loaded",
         description: `Successfully loaded ${newPages.length} page(s).`,
@@ -182,14 +180,7 @@ export default function TableScanPro() {
 
   const handlePageSelect = (index: number) => {
     if (index === currentPageIndex) return;
-    const targetPage = pages[index];
-    if (targetPage) {
-      setCurrentPageIndex(index);
-      setTableRegions(targetPage.tableRegions || []);
-      if (status === 'selecting-tables' && (targetPage.tableRegions?.length || 0) === 0 && isCvLoaded) {
-        autoDetectRegions(targetPage.originalImage);
-      }
-    }
+    setCurrentPageIndex(index);
   };
 
   const proceedToRefine = async () => {
@@ -204,7 +195,6 @@ export default function TableScanPro() {
         }
       }
       setPages(updatedPages);
-      setTableRegions(updatedPages[currentPageIndex].tableRegions);
       setStatus('refining');
     } catch (err) {
       console.warn("Grid detection limited:", err);
@@ -270,10 +260,6 @@ export default function TableScanPro() {
         r.id === id ? { ...r, verticalLines: vLines, horizontalLines: hLines } : r
       )
     })));
-
-    setTableRegions(prev => prev.map(r => 
-      r.id === id ? { ...r, verticalLines: vLines, horizontalLines: hLines } : r
-    ));
   };
 
   const handleExport = (table: ExtractedTable, format: 'csv' | 'json' | 'md' | 'html') => {
@@ -294,8 +280,8 @@ export default function TableScanPro() {
     setPages([]);
     setAllExtractedData([]);
     setStatus('idle');
-    setTableRegions([]);
     setCurrentPageIndex(0);
+    autoDetectedPages.current.clear();
   };
 
   const toggleLang = (id: string) => {
@@ -420,8 +406,8 @@ export default function TableScanPro() {
                   </CardHeader>
                   <TableSelector 
                     imageSrc={currentPage?.originalImage || null}
-                    regions={tableRegions}
-                    onRegionsChange={setTableRegions}
+                    regions={currentPage?.tableRegions || []}
+                    onRegionsChange={updateCurrentPageRegions}
                     allPages={pages}
                     currentPageIndex={currentPageIndex}
                     onNavigateToPage={handlePageSelect}
@@ -571,7 +557,7 @@ export default function TableScanPro() {
                       <Button 
                         className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
                         onClick={proceedToRefine}
-                        disabled={isDetecting || pages.every(p => (p.tableRegions?.length || 0) === 0 && (p.id !== currentPage?.id || tableRegions.length === 0))}
+                        disabled={isDetecting || pages.every(p => (p.tableRegions?.length || 0) === 0)}
                       >
                         Next <ChevronRight className="ml-1 w-4 h-4" />
                       </Button>
