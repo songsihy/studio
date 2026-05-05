@@ -1,10 +1,9 @@
-
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
 import { TableRegion } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { X, MousePointer2, Plus, Loader2 } from 'lucide-react';
+import { X, Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface TableSelectorProps {

@@ -1,10 +1,9 @@
-
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Loader2, Trash2, MousePointer2 } from 'lucide-react';
+import { Plus, X, Loader2, Trash2, MousePointer2, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -12,6 +11,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface LineEditorProps {
   imageSrc: string | null;
@@ -24,6 +24,18 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState<{ id: string; type: 'v' | 'h' } | null>(null);
   const [addMode, setAddMode] = useState<'v' | 'h' | null>(null);
+  const [cvReady, setCvReady] = useState(false);
+
+  useEffect(() => {
+    const checkCV = () => {
+      if (typeof window !== 'undefined' && (window as any).cv) {
+        setCvReady(true);
+      } else {
+        setTimeout(checkCV, 500);
+      }
+    };
+    checkCV();
+  }, []);
 
   const addLine = (type: 'vertical' | 'horizontal', position: number = 50) => {
     const newLine: TableLine = {
@@ -98,6 +110,16 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
 
   return (
     <div className="flex flex-col gap-4">
+      {!cvReady && (
+        <Alert className="bg-primary/5 border-primary/20">
+          <Info className="h-4 w-4 text-primary" />
+          <AlertDescription className="text-xs text-primary font-medium flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            OpenCV.js is initializing for advanced line detection...
+          </AlertDescription>
+        </Alert>
+      )}
+
       <TooltipProvider>
         <div className="flex flex-wrap justify-between items-center bg-card p-3 rounded-lg border shadow-sm gap-4">
           <div className="flex flex-wrap gap-2">
