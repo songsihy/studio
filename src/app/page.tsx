@@ -18,7 +18,8 @@ import {
   Files,
   Grid3X3,
   Check,
-  Info
+  Info,
+  Wand2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -145,20 +146,30 @@ export default function TableScanPro() {
     if (targetPage) {
       setCurrentPageIndex(index);
       setTableRegions(targetPage.tableRegions || []);
-      if (status === 'selecting-tables' && targetPage.tableRegions.length === 0) {
+      // Optional: Auto-detect if page has no regions yet
+      if (status === 'selecting-tables' && (targetPage.tableRegions?.length || 0) === 0) {
         autoDetectRegions(targetPage.originalImage);
       }
     }
   };
 
   const autoDetectRegions = async (imageSrc: string) => {
-    if (!imageSrc) return;
+    if (!imageSrc || !isCvLoaded) return;
     setIsDetecting(true);
     try {
       const detected = await detectTableRegions(imageSrc);
       setTableRegions(detected);
+      toast({
+        title: "Detection Complete",
+        description: `Identified ${detected.length} potential table area(s).`,
+      });
     } catch (err) {
       console.warn("Detection failed:", err);
+      toast({
+        variant: "destructive",
+        title: "Detection Failed",
+        description: "OpenCV could not automatically define table areas."
+      });
     } finally {
       setIsDetecting(false);
     }
@@ -375,10 +386,20 @@ export default function TableScanPro() {
             <div className="space-y-6">
               {status === 'selecting-tables' && (
                 <Card className="border-2 shadow-xl overflow-hidden">
-                  <CardHeader className="bg-muted/30 border-b py-4">
+                  <CardHeader className="bg-muted/30 border-b py-4 flex flex-row items-center justify-between">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <ScanSearch className="w-5 h-5 text-primary" /> Step 2: Define Table Areas
                     </CardTitle>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="h-8 gap-2 bg-background shadow-sm hover:bg-secondary/10"
+                      onClick={() => currentPage && autoDetectRegions(currentPage.originalImage)}
+                      disabled={isDetecting || !isCvLoaded}
+                    >
+                      {isDetecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4 text-secondary" />}
+                      Auto-Detect
+                    </Button>
                   </CardHeader>
                   <TableSelector 
                     imageSrc={currentPage?.originalImage || null}
@@ -570,7 +591,7 @@ export default function TableScanPro() {
               </CardHeader>
               <CardContent className="text-xs text-muted-foreground space-y-3">
                 <p>• <b>Languages:</b> You can select multiple languages for mixed-content tables.</p>
-                <p>• <b>Step 2:</b> Draw boxes around tables. The list on the left shows all tables identified across all pages.</p>
+                <p>• <b>Step 2:</b> Draw boxes around tables. Use "Auto-Detect" to let OpenCV suggest areas.</p>
                 <p>• <b>Step 3:</b> Refine the grid lines for each table before starting the OCR process.</p>
                 <p>• <b>Local:</b> All data extraction is handled locally in your browser.</p>
               </CardContent>
