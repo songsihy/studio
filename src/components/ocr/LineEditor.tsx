@@ -68,6 +68,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
 
   const handleContainerClick = (e: React.MouseEvent) => {
     if (!addMode || !containerRef.current) return;
+    if ((e.target as HTMLElement).closest('button')) return;
 
     const rect = containerRef.current.getBoundingClientRect();
     if (addMode === 'v') {
@@ -81,6 +82,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
   };
 
   const handleMouseDown = (lineId: string, type: 'v' | 'h', e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return;
     e.stopPropagation();
     setActiveLine({ id: lineId, type });
   };
@@ -211,11 +213,12 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
                 style={{ left: `${line.position}%` }}
                 onMouseDown={(e) => handleMouseDown(line.id, 'v', e)}
               >
-                <div className="absolute top-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-30">
                   <Button 
                     size="icon" 
                     variant="destructive" 
                     className="h-5 w-5 rounded-full shadow-md" 
+                    onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'v'); }}
                   >
                     <X className="w-3 h-3" />
@@ -235,11 +238,12 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
                 style={{ top: `${line.position}%` }}
                 onMouseDown={(e) => handleMouseDown(line.id, 'h', e)}
               >
-                <div className="absolute left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-30">
                   <Button 
                     size="icon" 
                     variant="destructive" 
                     className="h-5 w-5 rounded-full shadow-md" 
+                    onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'h'); }}
                   >
                     <X className="w-3 h-3" />

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { TableRegion } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
 import { X, Plus, Loader2 } from 'lucide-react';
@@ -19,6 +19,9 @@ export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions,
   const [currentPos, setCurrentPos] = useState({ x: 0, y: 0 });
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    // Prevent drawing if clicking on a UI button (like the delete 'X')
+    if ((e.target as HTMLElement).closest('button')) return;
+
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
@@ -108,12 +111,16 @@ export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions,
                   height: `${region.height}%`,
                 }}
               >
-                <div className="absolute -top-3 -right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-30">
                   <Button 
                     size="icon" 
                     variant="destructive" 
                     className="h-6 w-6 rounded-full shadow-lg" 
-                    onClick={(e) => { e.stopPropagation(); removeRegion(region.id); }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      removeRegion(region.id); 
+                    }}
                   >
                     <X className="w-4 h-4" />
                   </Button>
