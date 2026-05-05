@@ -17,7 +17,7 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
     img.crossOrigin = 'Anonymous';
     img.onload = () => {
       try {
-        if (!window.cv) {
+        if (!window.cv || !window.cv.imread) {
           throw new Error('OpenCV.js not loaded');
         }
         const cv = window.cv;
@@ -79,7 +79,6 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
  * Includes: Denoising, Deskewing, Binarization, and Thinning.
  */
 function preprocessMatForOcr(cv: any, src: any): any {
-  // 1. Grayscale (if not already)
   const gray = new cv.Mat();
   if (src.channels() > 1) {
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
@@ -87,11 +86,9 @@ function preprocessMatForOcr(cv: any, src: any): any {
     src.copyTo(gray);
   }
 
-  // 2. Noise Removal (Median Blur)
   const denoised = new cv.Mat();
   cv.medianBlur(gray, denoised, 3);
 
-  // 3. Deskewing (Skew Correction)
   const threshForSkew = new cv.Mat();
   cv.threshold(denoised, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
   
@@ -103,12 +100,10 @@ function preprocessMatForOcr(cv: any, src: any): any {
     const box = cv.minAreaRect(points);
     let angle = box.angle;
     
-    // Adjust angle for minAreaRect output behavior
     if (angle < -45) {
       angle = angle + 90;
     }
     
-    // Only deskew if skew is significant (> 0.5 degrees)
     if (Math.abs(angle) > 0.5) {
       const center = new cv.Point(denoised.cols / 2, denoised.rows / 2);
       const M = cv.getRotationMatrix2D(center, angle, 1.0);
@@ -121,16 +116,13 @@ function preprocessMatForOcr(cv: any, src: any): any {
     denoised.copyTo(deskewed);
   }
 
-  // 4. Binarization (Adaptive Thresholding)
   const binary = new cv.Mat();
   cv.adaptiveThreshold(deskewed, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
 
-  // 5. Thinning/Skeletonization (Morphology)
   const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 1));
   const processed = new cv.Mat();
   cv.morphologyEx(binary, processed, cv.MORPH_CLOSE, kernel);
 
-  // Cleanup intermediate mats
   gray.delete(); denoised.delete(); threshForSkew.delete(); points.delete(); deskewed.delete(); binary.delete(); kernel.delete();
 
   return processed;
@@ -209,7 +201,7 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
     img.crossOrigin = 'Anonymous';
     img.onload = async () => {
       try {
-        if (!window.cv) throw new Error('OpenCV.js not loaded');
+        if (!window.cv || !window.cv.imread) throw new Error('OpenCV.js not loaded');
         const cv = window.cv;
         const src = cv.imread(img);
         const gray = new cv.Mat();
@@ -247,7 +239,7 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
     img.crossOrigin = 'Anonymous';
     img.onload = async () => {
       try {
-        if (!window.cv) throw new Error('OpenCV.js not loaded');
+        if (!window.cv || !window.cv.imread) throw new Error('OpenCV.js not loaded');
         const cv = window.cv;
         const src = cv.imread(img);
         const gray = new cv.Mat();
@@ -284,6 +276,9 @@ export async function processTablesOnPage(
   await new Promise(resolve => img.onload = resolve);
 
   const cv = window.cv;
+  if (!cv || !cv.imread) {
+    throw new Error('OpenCV.js is not initialized yet. Please wait a moment.');
+  }
   const srcMat = cv.imread(img);
 
   const canvas = document.createElement('canvas');
@@ -303,13 +298,11 @@ export async function processTablesOnPage(
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
 
-    // 1. Extract and PREPROCESS the whole region Mat for better OCR
     let tableX = Math.floor((region.x / 100) * srcMat.cols);
     let tableY = Math.floor((region.y / 100) * srcMat.rows);
     let tableW = Math.floor((region.width / 100) * srcMat.cols);
     let tableH = Math.floor((region.height / 100) * srcMat.rows);
 
-    // Bounds safety
     tableX = Math.max(0, tableX);
     tableY = Math.max(0, tableY);
     tableW = Math.min(srcMat.cols - tableX, tableW);
@@ -318,10 +311,8 @@ export async function processTablesOnPage(
     const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
     const regionMat = srcMat.roi(regionRect);
     
-    // Apply preprocessing (Binarization, Deskew, Noise Removal)
     const processedRegionMat = preprocessMatForOcr(cv, regionMat);
     
-    // We use a temporary canvas to slice the processed region into cells
     const tempCanvas = document.createElement('canvas');
     cv.imshow(tempCanvas, processedRegionMat);
 
@@ -338,7 +329,6 @@ export async function processTablesOnPage(
         if (w > 0 && h > 0) {
           canvas.width = w;
           canvas.height = h;
-          // Draw from the PROCESSED temporary canvas
           ctx.drawImage(tempCanvas, x, y, w, h, 0, 0, w, h);
           const { data: { text } } = await worker.recognize(canvas);
           row.push(text.trim());

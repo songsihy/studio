@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -78,12 +79,10 @@ export default function TableScanPro() {
   const [isCvLoaded, setIsCvLoaded] = useState(false);
   const { toast } = useToast();
 
-  // Ref to track which page IDs we've already tried to auto-detect to avoid infinite loops
   const autoDetectedPages = useRef<Set<string>>(new Set());
 
   const currentPage = pages[currentPageIndex];
 
-  // Robust OpenCV check
   useEffect(() => {
     const checkCv = setInterval(() => {
       if (typeof window !== 'undefined' && window.cv && window.cv.imread) {
@@ -129,7 +128,6 @@ export default function TableScanPro() {
     }
   }, [isCvLoaded, toast, updateCurrentPageRegions]);
 
-  // Reactive trigger when CV loads or page changes, but only once per page
   useEffect(() => {
     if (isCvLoaded && status === 'selecting-tables' && currentPage && (currentPage.tableRegions?.length || 0) === 0) {
       if (!autoDetectedPages.current.has(currentPage.id)) {
@@ -212,6 +210,15 @@ export default function TableScanPro() {
       return;
     }
 
+    if (!isCvLoaded) {
+      toast({
+        variant: "destructive",
+        title: "System Not Ready",
+        description: "OpenCV.js is still initializing. Please wait.",
+      });
+      return;
+    }
+
     setStatus('ocr-processing');
     setProgress(0);
     try {
@@ -240,6 +247,11 @@ export default function TableScanPro() {
     } catch (error) {
       console.error(error);
       setStatus('error');
+      toast({
+        variant: "destructive",
+        title: "OCR Failed",
+        description: error instanceof Error ? error.message : "An unexpected error occurred during processing."
+      });
     }
   };
 
@@ -567,9 +579,9 @@ export default function TableScanPro() {
                       <Button 
                         className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
                         onClick={runOCR}
-                        disabled={selectedLangs.length === 0}
+                        disabled={selectedLangs.length === 0 || !isCvLoaded}
                       >
-                        Process <ChevronRight className="ml-1 w-4 h-4" />
+                        {isCvLoaded ? "Process" : "Initializing..."} <ChevronRight className="ml-1 w-4 h-4" />
                       </Button>
                     )}
 
