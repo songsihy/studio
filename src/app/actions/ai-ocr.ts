@@ -31,7 +31,7 @@ export async function callAiEngineAction(
             ]
           }
         ],
-        max_tokens: 150
+        max_tokens: 15000
       })
     });
 
