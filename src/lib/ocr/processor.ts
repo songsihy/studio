@@ -474,14 +474,20 @@ export async function processTablesOnPage(
             text = result.data.text.trim();
           } else {
             const apiUrl = engineConfig.aiConfig.apiUrl;
-            // Check if URL is local to decide between direct client fetch or server action proxy
             const isLocal = apiUrl.includes('localhost') || apiUrl.includes('127.0.0.1') || apiUrl.includes('.local');
             
             if (isLocal) {
               try {
                 const imageUri = canvas.toDataURL('image/jpeg');
                 const base64Image = imageUri.split(',')[1];
-                const response = await fetch(apiUrl, {
+                
+                // Ensure URL has protocol for local fetch
+                let targetUrl = apiUrl;
+                if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                  targetUrl = 'http://' + targetUrl;
+                }
+
+                const response = await fetch(targetUrl, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
@@ -503,24 +509,33 @@ export async function processTablesOnPage(
                 });
 
                 if (!response.ok) {
-                  throw new Error(`Local AI error: ${response.statusText}`);
+                  const errorText = await response.text();
+                  throw new Error(`Local AI API error (${response.status}): ${errorText || response.statusText}`);
                 }
 
                 const data = await response.json();
                 text = (data.choices?.[0]?.message?.content || data.output?.text || "").trim();
               } catch (err) {
                 console.error("Local AI Fetch error:", err);
-                text = "[ERROR]";
+                if (err instanceof TypeError && err.message.includes('fetch')) {
+                  text = "[Connection Error: Check if local AI server is running and CORS is enabled]";
+                } else {
+                  text = `[ERROR: ${err instanceof Error ? err.message : String(err)}]`;
+                }
               }
             } else {
               // Use Server Action to proxy the AI request and bypass CORS for cloud APIs
-              text = await callAiEngineAction(
-                canvas.toDataURL('image/jpeg'), 
-                engineConfig.aiConfig.apiUrl,
-                engineConfig.aiConfig.apiKey,
-                engineConfig.aiConfig.model,
-                engineConfig.aiConfig.systemPrompt
-              );
+              try {
+                text = await callAiEngineAction(
+                  canvas.toDataURL('image/jpeg'), 
+                  engineConfig.aiConfig.apiUrl,
+                  engineConfig.aiConfig.apiKey,
+                  engineConfig.aiConfig.model,
+                  engineConfig.aiConfig.systemPrompt
+                );
+              } catch (err) {
+                text = `[SERVER ACTION ERROR: ${err instanceof Error ? err.message : String(err)}]`;
+              }
             }
           }
           row.push(text);
