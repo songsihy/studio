@@ -11,6 +11,8 @@ export interface PreprocessingOptions {
   binarize: boolean;
   deskew: boolean;
   denoise: boolean;
+  thresholdBlockSize: number;
+  thresholdC: number;
 }
 
 export interface TableRegion {

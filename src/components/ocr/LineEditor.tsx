@@ -4,7 +4,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine, TableRegion, PreprocessingOptions } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { detectLinesInSingleRegion, getPreprocessedPreview } from '@/lib/ocr/processor';
 import { useToast } from '@/hooks/use-toast';
 
@@ -46,7 +48,13 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const { toast } = useToast();
 
-  const preprocessing = cropRect.preprocessing || { binarize: true, deskew: true, denoise: true };
+  const preprocessing = cropRect.preprocessing || { 
+    binarize: true, 
+    deskew: true, 
+    denoise: true,
+    thresholdBlockSize: 31,
+    thresholdC: 2
+  };
 
   useEffect(() => {
     if (imageSrc) {
@@ -182,6 +190,12 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     onPreprocessingChange(newOpts);
   };
 
+  const updateThresholdOption = (key: 'thresholdBlockSize' | 'thresholdC', val: number) => {
+    if (!onPreprocessingChange) return;
+    const newOpts = { ...preprocessing, [key]: val };
+    onPreprocessingChange(newOpts);
+  };
+
   if (!imageSrc || !imgNaturalSize) return null;
 
   const cropAspect = (cropRect.width * imgNaturalSize.w) / (cropRect.height * imgNaturalSize.h);
@@ -218,6 +232,47 @@ export const LineEditor: React.FC<LineEditorProps> = ({
                 />
                 <Label htmlFor={`binarize-${cropRect.id}`} className="text-[10px] font-medium cursor-pointer">Binarize</Label>
               </div>
+
+              {preprocessing.binarize && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button size="icon" variant="ghost" className="h-6 w-6">
+                      <Settings2 size={12} className="text-muted-foreground" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-4 space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <Label className="text-[10px] font-bold">Block Size</Label>
+                        <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdBlockSize}px</span>
+                      </div>
+                      <Slider 
+                        min={3} 
+                        max={99} 
+                        step={2} 
+                        value={[preprocessing.thresholdBlockSize]} 
+                        onValueChange={(v) => updateThresholdOption('thresholdBlockSize', v[0])}
+                      />
+                      <p className="text-[9px] text-muted-foreground">Local neighborhood area for threshold calculation.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <Label className="text-[10px] font-bold">Constant (C)</Label>
+                        <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdC}</span>
+                      </div>
+                      <Slider 
+                        min={0} 
+                        max={20} 
+                        step={1} 
+                        value={[preprocessing.thresholdC]} 
+                        onValueChange={(v) => updateThresholdOption('thresholdC', v[0])}
+                      />
+                      <p className="text-[9px] text-muted-foreground">Value subtracted from the weighted mean.</p>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
+
               <div className="flex items-center gap-2">
                 <Switch 
                   id={`deskew-${cropRect.id}`} 
@@ -327,7 +382,6 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           />
         )}
 
-        {/* Render Grid Lines */}
         {vLines.map(line => (
           <div
             key={line.id}

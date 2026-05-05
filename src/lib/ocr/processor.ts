@@ -62,7 +62,9 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
               preprocessing: {
                 binarize: true,
                 deskew: true,
-                denoise: true
+                denoise: true,
+                thresholdBlockSize: 31,
+                thresholdC: 2
               }
             });
           }
@@ -84,11 +86,16 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 
 /**
  * Advanced image pre-processing for a region mat using OpenCV.
- * Tuned for document OCR to preserve thin strokes and handle uneven lighting.
  */
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
-    const opts = options || { binarize: true, deskew: true, denoise: true };
+    const opts = options || { 
+      binarize: true, 
+      deskew: true, 
+      denoise: true,
+      thresholdBlockSize: 31,
+      thresholdC: 2
+    };
     let current = src.clone();
     
     if (current.channels() > 1) {
@@ -100,8 +107,6 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 
     if (opts.denoise) {
       const blurred = new cv.Mat();
-      // Median blur is effective but can round character corners. 
-      // Using a small 3x3 kernel to preserve character integrity.
       cv.medianBlur(current, blurred, 3);
       current.delete();
       current = blurred;
@@ -118,7 +123,7 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
         let angle = box.angle;
         if (angle < -45) angle = angle + 90;
         
-        if (Math.abs(angle) > 0.3) { // Lower tolerance for rotation
+        if (Math.abs(angle) > 0.3) {
           const center = new cv.Point(current.cols / 2, current.rows / 2);
           const M = cv.getRotationMatrix2D(center, angle, 1.0);
           const deskewed = new cv.Mat();
@@ -134,17 +139,16 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 
     if (opts.binarize) {
       const binary = new cv.Mat();
-      // Refined adaptive parameters:
-      // - Larger block size (31) handles varied illumination better on large tables
-      // - Smaller C value (2) preserves thin strokes and light-colored text
+      // Use user-defined block size (must be odd)
+      const blockSize = Math.max(3, opts.thresholdBlockSize % 2 === 0 ? opts.thresholdBlockSize + 1 : opts.thresholdBlockSize);
       cv.adaptiveThreshold(
         current, 
         binary, 
         255, 
         cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
         cv.THRESH_BINARY, 
-        31, 
-        2
+        blockSize, 
+        opts.thresholdC
       );
       current.delete();
       current = binary;
@@ -160,32 +164,27 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 /**
  * Basic Canvas-based pre-processing (Grayscale + Balanced Thresholding)
  */
-function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, height: number) {
+function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, height: number, options?: PreprocessingOptions) {
   if (width <= 0 || height <= 0) return;
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
+  
+  // Simple global thresholding logic for Canvas fallback
+  const C = options?.thresholdC !== undefined ? options.thresholdC * 5 : 10;
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
-    
-    // Accurate luminance calculation
     const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-    
-    // Using 180 as a slightly more conservative threshold to favor black text
-    const val = luminance > 180 ? 255 : 0;
-    
-    data[i] = val;
-    data[i + 1] = val;
-    data[i + 2] = val;
+    const val = luminance > (180 - C) ? 255 : 0;
+    data[i] = data[i + 1] = data[i + 2] = val;
   }
   ctx.putImageData(imageData, 0, 0);
 }
 
 /**
  * Generates a preprocessed preview data URI for a region.
- * Ensures the result is ALWAYS a crop of the table, never the whole image.
  */
 export async function getPreprocessedPreview(imageSrc: string, region: TableRegion, options: PreprocessingOptions): Promise<string> {
   return new Promise((resolve) => {
@@ -208,12 +207,10 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
       canvas.width = w;
       canvas.height = h;
 
-      // Try OpenCV first
       if (window.cv && window.cv.imread) {
         try {
           const cv = window.cv;
           const src = cv.imread(img);
-          
           const tableX = Math.max(0, Math.floor(x));
           const tableY = Math.max(0, Math.floor(y));
           const tableW = Math.min(src.cols - tableX, Math.floor(w));
@@ -223,28 +220,24 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
             const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
             const regionMat = src.roi(regionRect);
             const processedMat = preprocessMatForOcr(cv, regionMat, options);
-
             cv.imshow(canvas, processedMat);
             const dataUrl = canvas.toDataURL();
-
             src.delete();
             regionMat.delete();
             processedMat.delete();
-            
             resolve(dataUrl);
             return;
           }
           src.delete();
         } catch (e) {
-          console.error("OpenCV preview generation failed, using Canvas fallback", e);
+          console.error("OpenCV preview failed", e);
         }
       }
 
-      // Fallback: Canvas crop
       if (ctx) {
         ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
         if (options.binarize) {
-          preprocessCanvasForOcr(ctx, w, h);
+          preprocessCanvasForOcr(ctx, w, h, options);
         }
         resolve(canvas.toDataURL());
       } else {
@@ -256,9 +249,6 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
   });
 }
 
-/**
- * Core logic to detect lines in a single ROI
- */
 async function detectLinesForRoi(cv: any, binary: any, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
   let x = Math.floor((region.x / 100) * binary.cols);
   let y = Math.floor((region.y / 100) * binary.rows);
@@ -275,7 +265,6 @@ async function detectLinesForRoi(cv: any, binary: any, region: TableRegion): Pro
   if (w > 0 && h > 0) {
     const rect = new cv.Rect(x, y, w, h);
     const roi = binary.roi(rect);
-    
     const horizontalSize = Math.max(2, Math.floor(w / 30));
     const horizontalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(horizontalSize, 1));
     const verticalSize = Math.max(2, Math.floor(h / 30));
@@ -371,9 +360,7 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
         const binary = new cv.Mat();
         cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 11, 2);
-
         const lines = await detectLinesForRoi(cv, binary, region);
-
         src.delete(); gray.delete(); binary.delete();
         resolve(lines);
       } catch (err) {
@@ -385,9 +372,6 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
   });
 }
 
-/**
- * Process all tables on a page using Tesseract.js with OpenCV or Canvas preprocessing
- */
 export async function processTablesOnPage(
   imageSrc: string, 
   regions: TableRegion[], 
@@ -395,7 +379,6 @@ export async function processTablesOnPage(
   onProgress?: (progress: number) => void
 ): Promise<ExtractedTable[]> {
   const worker = await createWorker(language);
-  
   const img = new Image();
   img.src = imageSrc;
   await new Promise(resolve => img.onload = resolve);
@@ -404,11 +387,7 @@ export async function processTablesOnPage(
   const useCv = !!(cv && cv.imread);
   let srcMat: any = null;
   if (useCv) {
-    try {
-      srcMat = cv.imread(img);
-    } catch (e) {
-      console.warn("OpenCV imread failed, falling back to Canvas", e);
-    }
+    try { srcMat = cv.imread(img); } catch (e) { console.warn("OpenCV fail", e); }
   }
 
   const canvas = document.createElement('canvas');
@@ -427,15 +406,14 @@ export async function processTablesOnPage(
   for (const region of regions) {
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
-
     const tempCanvas = document.createElement('canvas');
+    
     if (useCv && srcMat) {
       try {
         let tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
         let tableY = Math.max(0, Math.floor((region.y / 100) * srcMat.rows));
         let tableW = Math.min(srcMat.cols - tableX, Math.floor((region.width / 100) * srcMat.cols));
         let tableH = Math.min(srcMat.rows - tableY, Math.floor((region.height / 100) * srcMat.rows));
-
         const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
         const regionMat = srcMat.roi(regionRect);
         const processedRegionMat = preprocessMatForOcr(cv, regionMat, region.preprocessing);
@@ -443,15 +421,14 @@ export async function processTablesOnPage(
         regionMat.delete();
         processedRegionMat.delete();
       } catch (e) {
-        console.error("Advanced CV processing failed for region, using fallback", e);
-        fallbackToCanvas(img, region, tempCanvas, true);
+        fallbackToCanvas(img, region, tempCanvas, true, region.preprocessing);
       }
     } else {
-      fallbackToCanvas(img, region, tempCanvas, true);
+      fallbackToCanvas(img, region, tempCanvas, true, region.preprocessing);
     }
 
     const rows: string[][] = [];
-    const cellPadding = 2; // Pixel bleed
+    const cellPadding = 2;
 
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
@@ -460,34 +437,23 @@ export async function processTablesOnPage(
         let y = (hCoords[i] / 100) * tempCanvas.height - cellPadding;
         let w = ((vCoords[j + 1] - vCoords[j]) / 100) * tempCanvas.width + (cellPadding * 2);
         let h = ((hCoords[i + 1] - hCoords[i]) / 100) * tempCanvas.height + (cellPadding * 2);
-
-        x = Math.max(0, x);
-        y = Math.max(0, y);
-        w = Math.min(tempCanvas.width - x, w);
-        h = Math.min(tempCanvas.height - y, h);
+        x = Math.max(0, x); y = Math.max(0, y);
+        w = Math.min(tempCanvas.width - x, w); h = Math.min(tempCanvas.height - y, h);
 
         if (w > 1 && h > 1) {
-          canvas.width = w;
-          canvas.height = h;
+          canvas.width = w; canvas.height = h;
           ctx.drawImage(tempCanvas, x, y, w, h, 0, 0, w, h);
           const { data: { text } } = await worker.recognize(canvas);
           row.push(text.trim());
         } else {
           row.push("");
         }
-        
         processedCells++;
         if (onProgress) onProgress(processedCells / totalCells);
       }
       rows.push(row);
     }
-
-    allResults.push({
-      id: region.id,
-      tableName: region.name,
-      headers: rows[0] || [],
-      rows: rows
-    });
+    allResults.push({ id: region.id, tableName: region.name, headers: rows[0] || [], rows: rows });
   }
 
   if (srcMat) srcMat.delete();
@@ -495,18 +461,16 @@ export async function processTablesOnPage(
   return allResults;
 }
 
-function fallbackToCanvas(img: HTMLImageElement, region: TableRegion, canvas: HTMLCanvasElement, preprocess: boolean = false) {
+function fallbackToCanvas(img: HTMLImageElement, region: TableRegion, canvas: HTMLCanvasElement, preprocess: boolean = false, options?: PreprocessingOptions) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const x = (region.x / 100) * img.width;
   const y = (region.y / 100) * img.height;
   const w = (region.width / 100) * img.width;
   const h = (region.height / 100) * img.height;
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = w; canvas.height = h;
   ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
-
   if (preprocess) {
-    preprocessCanvasForOcr(ctx, w, h);
+    preprocessCanvasForOcr(ctx, w, h, options);
   }
 }
