@@ -32,7 +32,8 @@ import {
   DocumentPage, 
   ExtractedTable, 
   TableRegion, 
-  TableLine 
+  TableLine,
+  PreprocessingOptions
 } from '@/lib/ocr-types';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -102,7 +103,6 @@ export default function TableScanPro() {
   const autoDetectRegions = useCallback(async (imageSrc: string) => {
     if (!imageSrc) return;
     
-    // Fallback if OpenCV not ready
     if (!isCvLoaded) {
       toast({
         title: "Waiting for System",
@@ -235,7 +235,9 @@ export default function TableScanPro() {
             page.originalImage, 
             page.tableRegions, 
             langString,
-            () => {} 
+            (p) => {
+              // Approximate progress within the current page
+            } 
           );
           finalResults = [...finalResults, ...pageResults];
           processedRegions++;
@@ -271,6 +273,15 @@ export default function TableScanPro() {
       ...p,
       tableRegions: p.tableRegions.map(r => 
         r.id === id ? { ...r, verticalLines: vLines, horizontalLines: hLines } : r
+      )
+    })));
+  };
+
+  const updateRegionPreprocessing = (id: string, options: PreprocessingOptions) => {
+    setPages(prev => prev.map(p => ({
+      ...p,
+      tableRegions: p.tableRegions.map(r => 
+        r.id === id ? { ...r, preprocessing: options } : r
       )
     })));
   };
@@ -435,7 +446,7 @@ export default function TableScanPro() {
                       <Grid3X3 className="text-primary w-6 h-6" />
                       <div>
                         <h2 className="font-bold text-lg">Step 3: Refine Table Grids</h2>
-                        <p className="text-xs text-muted-foreground">Adjust lines for all identified tables across all pages</p>
+                        <p className="text-xs text-muted-foreground">Adjust lines and pre-processing for all tables</p>
                       </div>
                     </div>
                   </div>
@@ -452,6 +463,7 @@ export default function TableScanPro() {
                             vLines={region.verticalLines || []}
                             hLines={region.horizontalLines || []}
                             onLinesChange={(v, h) => updateRegionLines(region.id, v, h)}
+                            onPreprocessingChange={(opts) => updateRegionPreprocessing(region.id, opts)}
                           />
                         ))}
                       </React.Fragment>
@@ -606,8 +618,8 @@ export default function TableScanPro() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-xs text-muted-foreground space-y-3">
+                <p>• <b>Cleanup:</b> In Step 3, use "Preview Cleanup" to see how the binarization and deskewing will look to the OCR engine.</p>
                 <p>• <b>Languages:</b> You can select multiple languages for mixed-content tables.</p>
-                <p>• <b>Step 2:</b> Draw boxes around tables. Use "Auto-Detect" to let OpenCV suggest areas.</p>
                 <p>• <b>Step 3:</b> Refine the grid lines for each table before starting the OCR process.</p>
                 <p>• <b>Local:</b> All data extraction is handled locally in your browser.</p>
               </CardContent>

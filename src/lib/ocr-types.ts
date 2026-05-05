@@ -7,6 +7,12 @@ export interface TableLine {
   position: number; // percentage (0-100) relative to the container
 }
 
+export interface PreprocessingOptions {
+  binarize: boolean;
+  deskew: boolean;
+  denoise: boolean;
+}
+
 export interface TableRegion {
   id: string;
   name: string; // Variable name for the table
@@ -16,6 +22,7 @@ export interface TableRegion {
   height: number; // percentage
   verticalLines?: TableLine[];
   horizontalLines?: TableLine[];
+  preprocessing?: PreprocessingOptions;
 }
 
 export interface TableCell {

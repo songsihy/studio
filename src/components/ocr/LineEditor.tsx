@@ -2,9 +2,9 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { TableLine, TableRegion } from '@/lib/ocr-types';
+import { TableLine, TableRegion, PreprocessingOptions } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, Wand2, Loader2 } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -12,15 +12,18 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { detectLinesInSingleRegion } from '@/lib/ocr/processor';
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { detectLinesInSingleRegion, getPreprocessedPreview } from '@/lib/ocr/processor';
 import { useToast } from '@/hooks/use-toast';
 
 interface LineEditorProps {
   imageSrc: string | null;
-  cropRect: TableRegion; // full region object
+  cropRect: TableRegion;
   vLines: TableLine[];
   hLines: TableLine[];
   onLinesChange: (vLines: TableLine[], hLines: TableLine[]) => void;
+  onPreprocessingChange?: (options: PreprocessingOptions) => void;
   title: string;
 }
 
@@ -30,6 +33,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   vLines, 
   hLines, 
   onLinesChange,
+  onPreprocessingChange,
   title
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -37,7 +41,12 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   const [addMode, setAddMode] = useState<'v' | 'h' | null>(null);
   const [imgNaturalSize, setImgNaturalSize] = useState<{ w: number, h: number } | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
+  const [showProcessedPreview, setShowProcessedPreview] = useState(false);
+  const [processedImageUri, setProcessedImageUri] = useState<string | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const { toast } = useToast();
+
+  const preprocessing = cropRect.preprocessing || { binarize: true, deskew: true, denoise: true };
 
   useEffect(() => {
     if (imageSrc) {
@@ -50,6 +59,27 @@ export const LineEditor: React.FC<LineEditorProps> = ({
       if (img.complete) handleLoad();
     }
   }, [imageSrc]);
+
+  useEffect(() => {
+    if (showProcessedPreview && imageSrc) {
+      updateProcessedPreview();
+    } else {
+      setProcessedImageUri(null);
+    }
+  }, [showProcessedPreview, preprocessing, imageSrc, cropRect.x, cropRect.y, cropRect.width, cropRect.height]);
+
+  const updateProcessedPreview = async () => {
+    if (!imageSrc) return;
+    setIsPreviewLoading(true);
+    try {
+      const uri = await getPreprocessedPreview(imageSrc, cropRect, preprocessing);
+      setProcessedImageUri(uri);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
 
   const addLine = (type: 'vertical' | 'horizontal', position: number) => {
     const newLine: TableLine = {
@@ -146,6 +176,12 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     setActiveLine(null);
   };
 
+  const togglePreprocessing = (key: keyof PreprocessingOptions) => {
+    if (!onPreprocessingChange) return;
+    const newOpts = { ...preprocessing, [key]: !preprocessing[key] };
+    onPreprocessingChange(newOpts);
+  };
+
   if (!imageSrc || !imgNaturalSize) return null;
 
   const cropAspect = (cropRect.width * imgNaturalSize.w) / (cropRect.height * imgNaturalSize.h);
@@ -166,6 +202,54 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             Auto-Grid
           </Button>
         </div>
+
+        <div className="flex items-center gap-4 bg-card p-1.5 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-3 px-2 border-r pr-4">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+              <Sparkles size={12} className="text-secondary" /> OCR Cleanup:
+            </span>
+            <div className="flex gap-4">
+              <div className="flex items-center gap-2">
+                <Switch 
+                  id={`binarize-${cropRect.id}`} 
+                  checked={preprocessing.binarize} 
+                  onCheckedChange={() => togglePreprocessing('binarize')}
+                  className="scale-75"
+                />
+                <Label htmlFor={`binarize-${cropRect.id}`} className="text-[10px] font-medium cursor-pointer">Binarize</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch 
+                  id={`deskew-${cropRect.id}`} 
+                  checked={preprocessing.deskew} 
+                  onCheckedChange={() => togglePreprocessing('deskew')}
+                  className="scale-75"
+                />
+                <Label htmlFor={`deskew-${cropRect.id}`} className="text-[10px] font-medium cursor-pointer">Deskew</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch 
+                  id={`denoise-${cropRect.id}`} 
+                  checked={preprocessing.denoise} 
+                  onCheckedChange={() => togglePreprocessing('denoise')}
+                  className="scale-75"
+                />
+                <Label htmlFor={`denoise-${cropRect.id}`} className="text-[10px] font-medium cursor-pointer">Denoise</Label>
+              </div>
+            </div>
+          </div>
+
+          <Button 
+            size="sm" 
+            variant={showProcessedPreview ? "secondary" : "outline"} 
+            className="h-7 text-[10px] gap-1.5"
+            onClick={() => setShowProcessedPreview(!showProcessedPreview)}
+          >
+            {showProcessedPreview ? <EyeOff size={12} /> : <Eye size={12} />}
+            Preview Cleanup
+          </Button>
+        </div>
+
         <TooltipProvider>
           <div className="flex gap-2 bg-card p-1 rounded-md border shadow-sm">
             <Tooltip>
@@ -210,7 +294,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
         className={cn(
           "relative border rounded-lg overflow-hidden bg-white select-none cursor-crosshair group shadow-inner mx-auto",
           addMode && "ring-2 ring-primary/20",
-          isDetecting && "opacity-70 grayscale-[50%]"
+          (isDetecting || isPreviewLoading) && "opacity-70 grayscale-[50%]"
         )}
         onClick={handleContainerClick}
         onMouseMove={handleMouseMove}
@@ -223,17 +307,25 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           maxHeight: '70vh',
         }}
       >
-        <img 
-          src={imageSrc} 
-          alt="Table crop"
-          className="absolute max-w-none pointer-events-none"
-          style={{
-            width: `${10000 / cropRect.width}%`,
-            height: `${10000 / cropRect.height}%`,
-            left: `${- (cropRect.x / cropRect.width) * 100}%`,
-            top: `${- (cropRect.y / cropRect.height) * 100}%`,
-          }}
-        />
+        {!showProcessedPreview || !processedImageUri ? (
+          <img 
+            src={imageSrc} 
+            alt="Table crop"
+            className="absolute max-w-none pointer-events-none"
+            style={{
+              width: `${10000 / cropRect.width}%`,
+              height: `${10000 / cropRect.height}%`,
+              left: `${- (cropRect.x / cropRect.width) * 100}%`,
+              top: `${- (cropRect.y / cropRect.height) * 100}%`,
+            }}
+          />
+        ) : (
+          <img 
+            src={processedImageUri} 
+            alt="Processed preview"
+            className="absolute inset-0 w-full h-full object-fill pointer-events-none"
+          />
+        )}
 
         {/* Render Grid Lines */}
         {vLines.map(line => (
@@ -282,7 +374,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           </div>
         )}
 
-        {isDetecting && (
+        {(isDetecting || isPreviewLoading) && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/5 z-50">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>

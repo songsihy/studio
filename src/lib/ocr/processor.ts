@@ -1,6 +1,6 @@
 
 import { createWorker } from 'tesseract.js';
-import { TableLine, TableRegion, ExtractedTable } from '@/lib/ocr-types';
+import { TableLine, TableRegion, ExtractedTable, PreprocessingOptions } from '@/lib/ocr-types';
 
 declare global {
   interface Window {
@@ -58,7 +58,12 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
               width: (rect.width / src.cols) * 100,
               height: (rect.height / src.rows) * 100,
               verticalLines: [],
-              horizontalLines: []
+              horizontalLines: [],
+              preprocessing: {
+                binarize: true,
+                deskew: true,
+                denoise: true
+              }
             });
           }
         }
@@ -80,52 +85,59 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 /**
  * Advanced image pre-processing for a region mat using OpenCV.
  */
-function preprocessMatForOcr(cv: any, src: any): any {
+function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
-    const gray = new cv.Mat();
-    if (src.channels() > 1) {
-      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    const opts = options || { binarize: true, deskew: true, denoise: true };
+    const working = src.clone();
+    
+    let current = new cv.Mat();
+    if (working.channels() > 1) {
+      cv.cvtColor(working, current, cv.COLOR_RGBA2GRAY, 0);
     } else {
-      src.copyTo(gray);
+      working.copyTo(current);
+    }
+    working.delete();
+
+    if (opts.denoise) {
+      const blurred = new cv.Mat();
+      cv.medianBlur(current, blurred, 3);
+      current.delete();
+      current = blurred;
     }
 
-    const denoised = new cv.Mat();
-    cv.medianBlur(gray, denoised, 3);
-
-    const threshForSkew = new cv.Mat();
-    cv.threshold(denoised, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-    
-    const points = new cv.Mat();
-    cv.findNonZero(threshForSkew, points);
-    
-    let deskewed = new cv.Mat();
-    if (!points.empty()) {
-      const box = cv.minAreaRect(points);
-      let angle = box.angle;
-      if (angle < -45) angle = angle + 90;
+    if (opts.deskew) {
+      const threshForSkew = new cv.Mat();
+      cv.threshold(current, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+      const points = new cv.Mat();
+      cv.findNonZero(threshForSkew, points);
       
-      if (Math.abs(angle) > 0.5) {
-        const center = new cv.Point(denoised.cols / 2, denoised.rows / 2);
-        const M = cv.getRotationMatrix2D(center, angle, 1.0);
-        cv.warpAffine(denoised, deskewed, M, new cv.Size(denoised.cols, denoised.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
-        M.delete();
-      } else {
-        denoised.copyTo(deskewed);
+      if (!points.empty()) {
+        const box = cv.minAreaRect(points);
+        let angle = box.angle;
+        if (angle < -45) angle = angle + 90;
+        
+        if (Math.abs(angle) > 0.5) {
+          const center = new cv.Point(current.cols / 2, current.rows / 2);
+          const M = cv.getRotationMatrix2D(center, angle, 1.0);
+          const deskewed = new cv.Mat();
+          cv.warpAffine(current, deskewed, M, new cv.Size(current.cols, current.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+          current.delete();
+          current = deskewed;
+          M.delete();
+        }
       }
-    } else {
-      denoised.copyTo(deskewed);
+      threshForSkew.delete();
+      points.delete();
     }
 
-    const binary = new cv.Mat();
-    cv.adaptiveThreshold(deskewed, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+    if (opts.binarize) {
+      const binary = new cv.Mat();
+      cv.adaptiveThreshold(current, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+      current.delete();
+      current = binary;
+    }
 
-    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 1));
-    const processed = new cv.Mat();
-    cv.morphologyEx(binary, processed, cv.MORPH_CLOSE, kernel);
-
-    gray.delete(); denoised.delete(); threshForSkew.delete(); points.delete(); deskewed.delete(); binary.delete(); kernel.delete();
-
-    return processed;
+    return current;
   } catch (e) {
     console.warn("Preprocessing failed, returning original ROI", e);
     return src.clone();
@@ -153,6 +165,55 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
     data[i + 2] = val;
   }
   ctx.putImageData(imageData, 0, 0);
+}
+
+/**
+ * Generates a preprocessed preview data URI for a region.
+ */
+export async function getPreprocessedPreview(imageSrc: string, region: TableRegion, options: PreprocessingOptions): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      try {
+        if (!window.cv || !window.cv.imread) {
+          resolve(imageSrc);
+          return;
+        }
+        const cv = window.cv;
+        const src = cv.imread(img);
+        
+        const tableX = Math.max(0, Math.floor((region.x / 100) * src.cols));
+        const tableY = Math.max(0, Math.floor((region.y / 100) * src.rows));
+        const tableW = Math.min(src.cols - tableX, Math.floor((region.width / 100) * src.cols));
+        const tableH = Math.min(src.rows - tableY, Math.floor((region.height / 100) * src.rows));
+
+        if (tableW <= 0 || tableH <= 0) {
+          src.delete();
+          resolve(imageSrc);
+          return;
+        }
+
+        const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
+        const regionMat = src.roi(regionRect);
+        const processedMat = preprocessMatForOcr(cv, regionMat, options);
+
+        const canvas = document.createElement('canvas');
+        cv.imshow(canvas, processedMat);
+        const dataUrl = canvas.toDataURL();
+
+        src.delete();
+        regionMat.delete();
+        processedMat.delete();
+        
+        resolve(dataUrl);
+      } catch (e) {
+        console.error("Preview generation failed", e);
+        resolve(imageSrc);
+      }
+    };
+    img.src = imageSrc;
+  });
 }
 
 /**
@@ -337,7 +398,7 @@ export async function processTablesOnPage(
 
         const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
         const regionMat = srcMat.roi(regionRect);
-        const processedRegionMat = preprocessMatForOcr(cv, regionMat);
+        const processedRegionMat = preprocessMatForOcr(cv, regionMat, region.preprocessing);
         cv.imshow(tempCanvas, processedRegionMat);
         regionMat.delete();
         processedRegionMat.delete();
@@ -350,18 +411,16 @@ export async function processTablesOnPage(
     }
 
     const rows: string[][] = [];
-    const cellPadding = 2; // Pixel bleed to ensure characters aren't cut off
+    const cellPadding = 2; // Pixel bleed
 
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
       for (let j = 0; j < vCoords.length - 1; j++) {
-        // Calculate crop with padding
         let x = (vCoords[j] / 100) * tempCanvas.width - cellPadding;
         let y = (hCoords[i] / 100) * tempCanvas.height - cellPadding;
         let w = ((vCoords[j + 1] - vCoords[j]) / 100) * tempCanvas.width + (cellPadding * 2);
         let h = ((hCoords[i + 1] - hCoords[i]) / 100) * tempCanvas.height + (cellPadding * 2);
 
-        // Clamp to source boundaries
         x = Math.max(0, x);
         y = Math.max(0, y);
         w = Math.min(tempCanvas.width - x, w);
