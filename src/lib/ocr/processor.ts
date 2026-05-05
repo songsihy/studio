@@ -65,7 +65,7 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
                 binarize: true,
                 deskew: true,
                 denoise: true,
-                thresholdMethod: 'global', // Default to Binary (Global)
+                thresholdMethod: 'global',
                 thresholdValue: 128,
                 thresholdBlockSize: 31,
                 thresholdC: 2,
@@ -473,14 +473,55 @@ export async function processTablesOnPage(
             const result = await worker.recognize(canvas);
             text = result.data.text.trim();
           } else {
-            // Use Server Action to proxy the AI request and bypass CORS
-            text = await callAiEngineAction(
-              canvas.toDataURL('image/jpeg'), 
-              engineConfig.aiConfig.apiUrl,
-              engineConfig.aiConfig.apiKey,
-              engineConfig.aiConfig.model,
-              engineConfig.aiConfig.systemPrompt
-            );
+            const apiUrl = engineConfig.aiConfig.apiUrl;
+            // Check if URL is local to decide between direct client fetch or server action proxy
+            const isLocal = apiUrl.includes('localhost') || apiUrl.includes('127.0.0.1') || apiUrl.includes('.local');
+            
+            if (isLocal) {
+              try {
+                const imageUri = canvas.toDataURL('image/jpeg');
+                const base64Image = imageUri.split(',')[1];
+                const response = await fetch(apiUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${engineConfig.aiConfig.apiKey}`
+                  },
+                  body: JSON.stringify({
+                    model: engineConfig.aiConfig.model,
+                    messages: [
+                      {
+                        role: 'user',
+                        content: [
+                          { type: 'text', text: engineConfig.aiConfig.systemPrompt },
+                          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+                        ]
+                      }
+                    ],
+                    max_tokens: 1000
+                  })
+                });
+
+                if (!response.ok) {
+                  throw new Error(`Local AI error: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                text = (data.choices?.[0]?.message?.content || data.output?.text || "").trim();
+              } catch (err) {
+                console.error("Local AI Fetch error:", err);
+                text = "[ERROR]";
+              }
+            } else {
+              // Use Server Action to proxy the AI request and bypass CORS for cloud APIs
+              text = await callAiEngineAction(
+                canvas.toDataURL('image/jpeg'), 
+                engineConfig.aiConfig.apiUrl,
+                engineConfig.aiConfig.apiKey,
+                engineConfig.aiConfig.model,
+                engineConfig.aiConfig.systemPrompt
+              );
+            }
           }
           row.push(text);
         } else {
