@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -555,7 +554,7 @@ export default function TableScanPro() {
                     return (
                       <div key={step.id} className="flex items-start gap-3">
                         <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isPast || isCurrent ? 'bg-secondary text-secondary-foreground' : 'bg-primary-foreground/20 text-white'}`}>
-                          {isPast ? <CheckCircle2 size={16} /> : (idx + 1)}
+                          {isPast ? <CheckCircle2 size={16} /> : (idx + 2)}
                         </div>
                         <div className="flex-1">
                           <p className={`font-semibold text-sm ${isCurrent ? 'text-white' : 'text-primary-foreground/70'}`}>{step.label}</p>
