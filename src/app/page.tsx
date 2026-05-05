@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect } from 'react';
@@ -200,7 +199,7 @@ export default function TableScanPro() {
               </CardHeader>
               <CardContent className="p-0">
                 <LineEditor 
-                  imageSrc={pages[currentPageIndex]?.originalImage || ''} 
+                  imageSrc={pages[currentPageIndex]?.originalImage || null} 
                   vLines={vLines} 
                   hLines={hLines}
                   onLinesChange={(v, h) => { setVLines(v); setHLines(h); }}

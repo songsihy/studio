@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -8,7 +7,7 @@ import { Plus, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface LineEditorProps {
-  imageSrc: string;
+  imageSrc: string | null;
   vLines: TableLine[];
   hLines: TableLine[];
   onLinesChange: (vLines: TableLine[], hLines: TableLine[]) => void;
