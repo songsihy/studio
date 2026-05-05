@@ -3,8 +3,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Loader2 } from 'lucide-react';
+import { Plus, X, Loader2, Trash2, MousePointer2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { 
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface LineEditorProps {
   imageSrc: string | null;
@@ -16,12 +22,13 @@ interface LineEditorProps {
 export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines, onLinesChange }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState<{ id: string; type: 'v' | 'h' } | null>(null);
+  const [addMode, setAddMode] = useState<'v' | 'h' | null>(null);
 
-  const addLine = (type: 'vertical' | 'horizontal') => {
+  const addLine = (type: 'vertical' | 'horizontal', position: number = 50) => {
     const newLine: TableLine = {
       id: Math.random().toString(36).substr(2, 9),
       type,
-      position: 50
+      position
     };
     if (type === 'vertical') {
       onLinesChange([...vLines, newLine], hLines);
@@ -38,7 +45,30 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
     }
   };
 
-  const handleMouseDown = (lineId: string, type: 'v' | 'h') => {
+  const clearLines = (type: 'v' | 'h') => {
+    if (type === 'v') {
+      onLinesChange([], hLines);
+    } else {
+      onLinesChange(vLines, []);
+    }
+  };
+
+  const handleContainerClick = (e: React.MouseEvent) => {
+    if (!addMode || !containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    if (addMode === 'v') {
+      const position = ((e.clientX - rect.left) / rect.width) * 100;
+      addLine('vertical', Math.max(0, Math.min(100, position)));
+    } else {
+      const position = ((e.clientY - rect.top) / rect.height) * 100;
+      addLine('horizontal', Math.max(0, Math.min(100, position)));
+    }
+    setAddMode(null);
+  };
+
+  const handleMouseDown = (lineId: string, type: 'v' | 'h', e: React.MouseEvent) => {
+    e.stopPropagation();
     setActiveLine({ id: lineId, type });
   };
 
@@ -67,23 +97,73 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex justify-between items-center bg-card p-3 rounded-lg border shadow-sm">
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => addLine('vertical')}>
-            <Plus className="w-4 h-4 mr-1" /> Vertical Line
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => addLine('horizontal')}>
-            <Plus className="w-4 h-4 mr-1" /> Horizontal Line
-          </Button>
+      <TooltipProvider>
+        <div className="flex flex-wrap justify-between items-center bg-card p-3 rounded-lg border shadow-sm gap-4">
+          <div className="flex flex-wrap gap-2">
+            <div className="flex items-center bg-muted/50 p-1 rounded-md border">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    size="sm" 
+                    variant={addMode === 'v' ? "secondary" : "ghost"} 
+                    onClick={() => setAddMode(addMode === 'v' ? null : 'v')}
+                    className="h-8"
+                  >
+                    <Plus className="w-4 h-4 mr-1" /> Vertical
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Click on image to add vertical line</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" variant="ghost" onClick={() => clearLines('v')} className="h-8 text-destructive hover:text-destructive">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Clear all vertical lines</TooltipContent>
+              </Tooltip>
+            </div>
+
+            <div className="flex items-center bg-muted/50 p-1 rounded-md border">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    size="sm" 
+                    variant={addMode === 'h' ? "secondary" : "ghost"} 
+                    onClick={() => setAddMode(addMode === 'h' ? null : 'h')}
+                    className="h-8"
+                  >
+                    <Plus className="w-4 h-4 mr-1" /> Horizontal
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Click on image to add horizontal line</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" variant="ghost" onClick={() => clearLines('h')} className="h-8 text-destructive hover:text-destructive">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Clear all horizontal lines</TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
+            <MousePointer2 className="w-3 h-3" />
+            {addMode ? `Click to add ${addMode === 'v' ? 'vertical' : 'horizontal'} line` : 'Drag lines to refine grid'}
+          </div>
         </div>
-        <div className="text-xs text-muted-foreground italic">
-          Drag lines to adjust cell boundaries
-        </div>
-      </div>
+      </TooltipProvider>
 
       <div 
         ref={containerRef}
-        className="relative border rounded-xl overflow-hidden bg-white select-none flex items-center justify-center"
+        className={cn(
+          "relative border rounded-xl overflow-hidden bg-white select-none flex items-center justify-center",
+          addMode && "cursor-crosshair",
+          !addMode && "cursor-default"
+        )}
+        onClick={handleContainerClick}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
@@ -102,14 +182,19 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
               <div
                 key={line.id}
                 className={cn(
-                  "absolute top-0 bottom-0 w-1.5 -ml-0.75 cursor-col-resize group z-20",
-                  activeLine?.id === line.id ? "bg-primary" : "bg-primary/20 hover:bg-primary/50"
+                  "absolute top-0 bottom-0 w-2 -ml-1 cursor-col-resize group z-20",
+                  activeLine?.id === line.id ? "bg-primary" : "bg-primary/25 hover:bg-primary/60"
                 )}
                 style={{ left: `${line.position}%` }}
-                onMouseDown={() => handleMouseDown(line.id, 'v')}
+                onMouseDown={(e) => handleMouseDown(line.id, 'v', e)}
               >
                 <div className="absolute top-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Button size="icon" variant="destructive" className="h-6 w-6 rounded-full" onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'v'); }}>
+                  <Button 
+                    size="icon" 
+                    variant="destructive" 
+                    className="h-5 w-5 rounded-full shadow-md" 
+                    onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'v'); }}
+                  >
                     <X className="w-3 h-3" />
                   </Button>
                 </div>
@@ -121,14 +206,19 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
               <div
                 key={line.id}
                 className={cn(
-                  "absolute left-0 right-0 h-1.5 -mt-0.75 cursor-row-resize group z-20",
-                  activeLine?.id === line.id ? "bg-primary" : "bg-primary/20 hover:bg-primary/50"
+                  "absolute left-0 right-0 h-2 -mt-1 cursor-row-resize group z-20",
+                  activeLine?.id === line.id ? "bg-primary" : "bg-primary/25 hover:bg-primary/60"
                 )}
                 style={{ top: `${line.position}%` }}
-                onMouseDown={() => handleMouseDown(line.id, 'h')}
+                onMouseDown={(e) => handleMouseDown(line.id, 'h', e)}
               >
                 <div className="absolute left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Button size="icon" variant="destructive" className="h-6 w-6 rounded-full" onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'h'); }}>
+                  <Button 
+                    size="icon" 
+                    variant="destructive" 
+                    className="h-5 w-5 rounded-full shadow-md" 
+                    onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'h'); }}
+                  >
                     <X className="w-3 h-3" />
                   </Button>
                 </div>
