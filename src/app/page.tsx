@@ -164,16 +164,18 @@ export default function TableScanPro() {
     setStatus('detecting');
     try {
       const { vLines: detectedV, hLines: detectedH } = await detectLines(currentPage.originalImage);
-      setVLines(detectedV);
-      setHLines(detectedH);
+      setVLines(detectedV || []);
+      setHLines(detectedH || []);
       setStatus('refining');
     } catch (err) {
-      console.error(err);
-      setStatus('error');
+      console.warn("OpenCV could not find table lines automatically:", err);
+      // Fallback: Proceed to manual refinement instead of showing an error screen
+      setVLines([]);
+      setHLines([]);
+      setStatus('refining');
       toast({
-        variant: "destructive",
-        title: "Detection Failed",
-        description: "OpenCV could not find table lines.",
+        title: "Detection Limited",
+        description: "Automatic grid detection was unsuccessful. You can now add manual guides.",
       });
     }
   };
