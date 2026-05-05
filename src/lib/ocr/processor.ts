@@ -88,15 +88,14 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
     const opts = options || { binarize: true, deskew: true, denoise: true };
-    const working = src.clone();
+    let current = src.clone();
     
-    let current = new cv.Mat();
-    if (working.channels() > 1) {
-      cv.cvtColor(working, current, cv.COLOR_RGBA2GRAY, 0);
-    } else {
-      working.copyTo(current);
+    if (current.channels() > 1) {
+      let gray = new cv.Mat();
+      cv.cvtColor(current, gray, cv.COLOR_RGBA2GRAY, 0);
+      current.delete();
+      current = gray;
     }
-    working.delete();
 
     if (opts.denoise) {
       const blurred = new cv.Mat();
@@ -139,7 +138,7 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 
     return current;
   } catch (e) {
-    console.warn("Preprocessing failed, returning original ROI", e);
+    console.warn("Preprocessing failed, returning clone", e);
     return src.clone();
   }
 }
@@ -169,49 +168,73 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
 
 /**
  * Generates a preprocessed preview data URI for a region.
+ * Ensures the result is ALWAYS a crop of the table, never the whole image.
  */
 export async function getPreprocessedPreview(imageSrc: string, region: TableRegion, options: PreprocessingOptions): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     img.onload = () => {
-      try {
-        if (!window.cv || !window.cv.imread) {
-          resolve(imageSrc);
-          return;
-        }
-        const cv = window.cv;
-        const src = cv.imread(img);
-        
-        const tableX = Math.max(0, Math.floor((region.x / 100) * src.cols));
-        const tableY = Math.max(0, Math.floor((region.y / 100) * src.rows));
-        const tableW = Math.min(src.cols - tableX, Math.floor((region.width / 100) * src.cols));
-        const tableH = Math.min(src.rows - tableY, Math.floor((region.height / 100) * src.rows));
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      const x = (region.x / 100) * img.width;
+      const y = (region.y / 100) * img.height;
+      const w = (region.width / 100) * img.width;
+      const h = (region.height / 100) * img.height;
 
-        if (tableW <= 0 || tableH <= 0) {
+      if (w <= 0 || h <= 0) {
+        resolve(imageSrc);
+        return;
+      }
+
+      canvas.width = w;
+      canvas.height = h;
+
+      // Try OpenCV first
+      if (window.cv && window.cv.imread) {
+        try {
+          const cv = window.cv;
+          const src = cv.imread(img);
+          
+          const tableX = Math.max(0, Math.floor(x));
+          const tableY = Math.max(0, Math.floor(y));
+          const tableW = Math.min(src.cols - tableX, Math.floor(w));
+          const tableH = Math.min(src.rows - tableY, Math.floor(h));
+
+          if (tableW > 0 && tableH > 0) {
+            const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
+            const regionMat = src.roi(regionRect);
+            const processedMat = preprocessMatForOcr(cv, regionMat, options);
+
+            cv.imshow(canvas, processedMat);
+            const dataUrl = canvas.toDataURL();
+
+            src.delete();
+            regionMat.delete();
+            processedMat.delete();
+            
+            resolve(dataUrl);
+            return;
+          }
           src.delete();
-          resolve(imageSrc);
-          return;
+        } catch (e) {
+          console.error("OpenCV preview generation failed, using Canvas fallback", e);
         }
+      }
 
-        const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
-        const regionMat = src.roi(regionRect);
-        const processedMat = preprocessMatForOcr(cv, regionMat, options);
-
-        const canvas = document.createElement('canvas');
-        cv.imshow(canvas, processedMat);
-        const dataUrl = canvas.toDataURL();
-
-        src.delete();
-        regionMat.delete();
-        processedMat.delete();
-        
-        resolve(dataUrl);
-      } catch (e) {
-        console.error("Preview generation failed", e);
+      // Fallback: Canvas crop (ensures user only sees the table image)
+      if (ctx) {
+        ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+        if (options.binarize) {
+          preprocessCanvasForOcr(ctx, w, h);
+        }
+        resolve(canvas.toDataURL());
+      } else {
         resolve(imageSrc);
       }
     };
+    img.onerror = () => resolve(imageSrc);
     img.src = imageSrc;
   });
 }
