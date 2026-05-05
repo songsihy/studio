@@ -75,13 +75,77 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 }
 
 /**
+ * Core logic to detect lines in a single ROI
+ */
+async function detectLinesForRoi(cv: any, binary: any, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
+  let x = Math.floor((region.x / 100) * binary.cols);
+  let y = Math.floor((region.y / 100) * binary.rows);
+  let w = Math.floor((region.width / 100) * binary.cols);
+  let h = Math.floor((region.height / 100) * binary.rows);
+
+  x = Math.max(0, x); y = Math.max(0, y);
+  w = Math.min(binary.cols - x, w);
+  h = Math.min(binary.rows - y, h);
+
+  const vPositions: number[] = [];
+  const hPositions: number[] = [];
+
+  if (w > 0 && h > 0) {
+    const rect = new cv.Rect(x, y, w, h);
+    const roi = binary.roi(rect);
+    
+    const horizontalSize = Math.max(2, Math.floor(w / 30));
+    const horizontalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(horizontalSize, 1));
+    const verticalSize = Math.max(2, Math.floor(h / 30));
+    const verticalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, verticalSize));
+
+    const horizontal = new cv.Mat();
+    cv.erode(roi, horizontal, horizontalStructure);
+    cv.dilate(horizontal, horizontal, horizontalStructure);
+
+    const vertical = new cv.Mat();
+    cv.erode(roi, vertical, verticalStructure);
+    cv.dilate(vertical, vertical, verticalStructure);
+
+    for (let j = 0; j < vertical.cols; j++) {
+      let count = 0;
+      for (let i = 0; i < vertical.rows; i++) {
+        if (vertical.ucharAt(i, j) > 128) count++;
+      }
+      if (count > vertical.rows * 0.5) vPositions.push((j / w) * 100);
+    }
+
+    for (let i = 0; i < horizontal.rows; i++) {
+      let count = 0;
+      for (let j = 0; j < horizontal.cols; j++) {
+        if (horizontal.ucharAt(i, j) > 128) count++;
+      }
+      if (count > horizontal.cols * 0.5) hPositions.push((i / h) * 100);
+    }
+
+    horizontal.delete(); vertical.delete(); roi.delete();
+    horizontalStructure.delete(); verticalStructure.delete();
+  }
+
+  const filter = (lines: number[]) => {
+    const unique = Array.from(new Set(lines)).sort((a, b) => a - b);
+    return unique.filter((pos, idx) => idx === 0 || Math.abs(pos - unique[idx - 1]) > 2);
+  };
+
+  return {
+    vLines: filter(vPositions).map((p, i) => ({ id: `v-${i}-${Date.now()}`, type: 'vertical', position: p })),
+    hLines: filter(hPositions).map((p, i) => ({ id: `h-${i}-${Date.now()}`, type: 'horizontal', position: p }))
+  };
+}
+
+/**
  * Detects lines within specific table regions.
  */
 export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[]): Promise<TableRegion[]> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
-    img.onload = () => {
+    img.onload = async () => {
       try {
         if (!window.cv) throw new Error('OpenCV.js not loaded');
         const cv = window.cv;
@@ -91,70 +155,48 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
         const binary = new cv.Mat();
         cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-        const updatedRegions = regions.map(region => {
-          let x = Math.floor((region.x / 100) * binary.cols);
-          let y = Math.floor((region.y / 100) * binary.rows);
-          let w = Math.floor((region.width / 100) * binary.cols);
-          let h = Math.floor((region.height / 100) * binary.rows);
-
-          x = Math.max(0, x); y = Math.max(0, y);
-          w = Math.min(binary.cols - x, w);
-          h = Math.min(binary.rows - y, h);
-
-          const vPositions: number[] = [];
-          const hPositions: number[] = [];
-
-          if (w > 0 && h > 0) {
-            const rect = new cv.Rect(x, y, w, h);
-            const roi = binary.roi(rect);
-            
-            const horizontalSize = Math.max(2, Math.floor(w / 30));
-            const horizontalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(horizontalSize, 1));
-            const verticalSize = Math.max(2, Math.floor(h / 30));
-            const verticalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, verticalSize));
-
-            const horizontal = new cv.Mat();
-            cv.erode(roi, horizontal, horizontalStructure);
-            cv.dilate(horizontal, horizontal, horizontalStructure);
-
-            const vertical = new cv.Mat();
-            cv.erode(roi, vertical, verticalStructure);
-            cv.dilate(vertical, vertical, verticalStructure);
-
-            for (let j = 0; j < vertical.cols; j++) {
-              let count = 0;
-              for (let i = 0; i < vertical.rows; i++) {
-                if (vertical.ucharAt(i, j) > 128) count++;
-              }
-              if (count > vertical.rows * 0.5) vPositions.push((j / w) * 100);
-            }
-
-            for (let i = 0; i < horizontal.rows; i++) {
-              let count = 0;
-              for (let j = 0; j < horizontal.cols; j++) {
-                if (horizontal.ucharAt(i, j) > 128) count++;
-              }
-              if (count > horizontal.cols * 0.5) hPositions.push((i / h) * 100);
-            }
-
-            horizontal.delete(); vertical.delete(); roi.delete();
-            horizontalStructure.delete(); verticalStructure.delete();
-          }
-
-          const filter = (lines: number[]) => {
-            const unique = Array.from(new Set(lines)).sort((a, b) => a - b);
-            return unique.filter((pos, idx) => idx === 0 || Math.abs(pos - unique[idx - 1]) > 2);
-          };
-
-          return {
+        const updatedRegions = [];
+        for (const region of regions) {
+          const { vLines, hLines } = await detectLinesForRoi(cv, binary, region);
+          updatedRegions.push({
             ...region,
-            verticalLines: filter(vPositions).map((p, i) => ({ id: `v-${i}-${Date.now()}`, type: 'vertical', position: p })),
-            horizontalLines: filter(hPositions).map((p, i) => ({ id: `h-${i}-${Date.now()}`, type: 'horizontal', position: p }))
-          };
-        });
+            verticalLines: vLines,
+            horizontalLines: hLines
+          });
+        }
 
         src.delete(); gray.delete(); binary.delete();
         resolve(updatedRegions);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = reject;
+    img.src = imageSrc;
+  });
+}
+
+/**
+ * Detects lines in a single region (used for refinement).
+ */
+export async function detectLinesInSingleRegion(imageSrc: string, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = async () => {
+      try {
+        if (!window.cv) throw new Error('OpenCV.js not loaded');
+        const cv = window.cv;
+        const src = cv.imread(img);
+        const gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+        const binary = new cv.Mat();
+        cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 11, 2);
+
+        const lines = await detectLinesForRoi(cv, binary, region);
+
+        src.delete(); gray.delete(); binary.delete();
+        resolve(lines);
       } catch (err) {
         reject(err);
       }

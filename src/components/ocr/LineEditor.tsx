@@ -2,9 +2,9 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { TableLine } from '@/lib/ocr-types';
+import { TableLine, TableRegion } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2 } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -12,10 +12,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { detectLinesInSingleRegion } from '@/lib/ocr/processor';
+import { useToast } from '@/hooks/use-toast';
 
 interface LineEditorProps {
   imageSrc: string | null;
-  cropRect: { x: number; y: number; width: number; height: number }; // percentages
+  cropRect: TableRegion; // full region object
   vLines: TableLine[];
   hLines: TableLine[];
   onLinesChange: (vLines: TableLine[], hLines: TableLine[]) => void;
@@ -34,6 +36,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   const [activeLine, setActiveLine] = useState<{ id: string; type: 'v' | 'h' } | null>(null);
   const [addMode, setAddMode] = useState<'v' | 'h' | null>(null);
   const [imgNaturalSize, setImgNaturalSize] = useState<{ w: number, h: number } | null>(null);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (imageSrc) {
@@ -73,6 +77,28 @@ export const LineEditor: React.FC<LineEditorProps> = ({
       onLinesChange([], hLines);
     } else {
       onLinesChange(vLines, []);
+    }
+  };
+
+  const handleAutoGrid = async () => {
+    if (!imageSrc) return;
+    setIsDetecting(true);
+    try {
+      const { vLines: newV, hLines: newH } = await detectLinesInSingleRegion(imageSrc, cropRect);
+      onLinesChange(newV, newH);
+      toast({
+        title: "Grid Detected",
+        description: `Automatically found ${newV.length} columns and ${newH.length} rows.`,
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Detection Failed",
+        description: "Could not automatically identify grid lines for this table."
+      });
+    } finally {
+      setIsDetecting(false);
     }
   };
 
@@ -122,14 +148,24 @@ export const LineEditor: React.FC<LineEditorProps> = ({
 
   if (!imageSrc || !imgNaturalSize) return null;
 
-  // Correct calculation of the cropped table's aspect ratio
-  // pixelWidth = (region.width% of imageNaturalWidth)
   const cropAspect = (cropRect.width * imgNaturalSize.w) / (cropRect.height * imgNaturalSize.h);
 
   return (
     <div className="space-y-4 border rounded-xl p-4 bg-muted/10 shadow-sm">
       <div className="flex flex-wrap justify-between items-center gap-4">
-        <h3 className="font-bold text-sm text-primary uppercase tracking-tight">{title}</h3>
+        <div className="flex items-center gap-3">
+          <h3 className="font-bold text-sm text-primary uppercase tracking-tight">{title}</h3>
+          <Button 
+            size="sm" 
+            variant="outline" 
+            className="h-7 text-[10px] gap-1.5 bg-background shadow-sm hover:bg-secondary/10"
+            onClick={handleAutoGrid}
+            disabled={isDetecting}
+          >
+            {isDetecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3 text-secondary" />}
+            Auto-Grid
+          </Button>
+        </div>
         <TooltipProvider>
           <div className="flex gap-2 bg-card p-1 rounded-md border shadow-sm">
             <Tooltip>
@@ -173,7 +209,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
         ref={containerRef}
         className={cn(
           "relative border rounded-lg overflow-hidden bg-white select-none cursor-crosshair group shadow-inner mx-auto",
-          addMode && "ring-2 ring-primary/20"
+          addMode && "ring-2 ring-primary/20",
+          isDetecting && "opacity-70 grayscale-[50%]"
         )}
         onClick={handleContainerClick}
         onMouseMove={handleMouseMove}
@@ -191,10 +228,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           alt="Table crop"
           className="absolute max-w-none pointer-events-none"
           style={{
-            // Scale the image up so that the identified region fills the entire container
             width: `${10000 / cropRect.width}%`,
             height: `${10000 / cropRect.height}%`,
-            // Offset the image so the top-left of the region aligns with the top-left of the container
             left: `${- (cropRect.x / cropRect.width) * 100}%`,
             top: `${- (cropRect.y / cropRect.height) * 100}%`,
           }}
@@ -244,6 +279,12 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             <span className="bg-primary text-white text-[10px] px-3 py-1 rounded-full shadow-lg font-bold">
               Click to place {addMode === 'v' ? 'column' : 'row'} guide
             </span>
+          </div>
+        )}
+
+        {isDetecting && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/5 z-50">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
         )}
       </div>
