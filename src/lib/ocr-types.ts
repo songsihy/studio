@@ -1,10 +1,18 @@
 
-export type ProcessingStatus = 'idle' | 'uploading' | 'detecting' | 'refining' | 'ocr-processing' | 'completed' | 'error';
+export type ProcessingStatus = 'idle' | 'uploading' | 'selecting-tables' | 'detecting' | 'refining' | 'ocr-processing' | 'completed' | 'error';
 
 export interface TableLine {
   id: string;
   type: 'vertical' | 'horizontal';
   position: number; // percentage (0-100)
+}
+
+export interface TableRegion {
+  id: string;
+  x: number; // percentage
+  y: number; // percentage
+  width: number; // percentage
+  height: number; // percentage
 }
 
 export interface TableCell {
@@ -22,8 +30,8 @@ export interface ExtractedTable {
 
 export interface DocumentPage {
   id: string;
-  originalImage: string; // Base64 or ObjectURL
-  detectedTables: ExtractedTable[];
+  originalImage: string; // Data URI
+  tableRegions: TableRegion[];
   verticalLines: TableLine[];
   horizontalLines: TableLine[];
 }
