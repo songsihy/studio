@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect } from 'react';
@@ -17,7 +16,8 @@ import {
   ScanSearch,
   Sparkles,
   Files,
-  Grid3X3
+  Grid3X3,
+  Check
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,24 +39,26 @@ import {
   exportToHTML, 
   downloadFile 
 } from '@/lib/ocr/exporter';
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Progress } from '@/components/ui/progress';
 import { detectTableRegions, processTablesOnPage, detectLinesInRegions } from '@/lib/ocr/processor';
 import { pdfToImages } from '@/lib/ocr/pdf-loader';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 
+const SUPPORTED_LANGS = [
+  { id: 'eng', label: 'English' },
+  { id: 'chi_tra', label: 'Chinese (Traditional)' },
+  { id: 'chi_sim', label: 'Chinese (Simplified)' },
+];
+
 export default function TableScanPro() {
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [pages, setPages] = useState<DocumentPage[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [language, setLanguage] = useState('eng');
+  const [selectedLangs, setSelectedLangs] = useState<string[]>(['eng']);
   const [tableRegions, setTableRegions] = useState<TableRegion[]>([]);
   const [progress, setProgress] = useState(0);
   const [allExtractedData, setAllExtractedData] = useState<ExtractedTable[]>([]);
@@ -65,7 +67,6 @@ export default function TableScanPro() {
 
   const currentPage = pages[currentPageIndex];
 
-  // Keep local tableRegions synced with the current page in the pages array during step 2
   useEffect(() => {
     if (status === 'selecting-tables' && pages.length > 0 && currentPage) {
       setPages(prev => prev.map((p, idx) => 
@@ -152,7 +153,6 @@ export default function TableScanPro() {
         }
       }
       setPages(updatedPages);
-      // Update local state for the current view
       setTableRegions(updatedPages[currentPageIndex].tableRegions);
       setStatus('refining');
     } catch (err) {
@@ -162,6 +162,15 @@ export default function TableScanPro() {
   };
 
   const runOCR = async () => {
+    if (selectedLangs.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "No Language Selected",
+        description: "Please select at least one language for OCR.",
+      });
+      return;
+    }
+
     setStatus('ocr-processing');
     setProgress(0);
     try {
@@ -169,13 +178,15 @@ export default function TableScanPro() {
       const totalRegions = pages.reduce((acc, p) => acc + (p.tableRegions?.length || 0), 0);
       let processedRegions = 0;
 
+      const langString = selectedLangs.join('+');
+
       for (const page of pages) {
         if (page.tableRegions.length > 0) {
           const pageResults = await processTablesOnPage(
             page.originalImage, 
             page.tableRegions, 
-            language,
-            () => {} // Intermediate progress per page is handled by global processedRegions
+            langString,
+            () => {} 
           );
           finalResults = [...finalResults, ...pageResults];
           processedRegions++;
@@ -202,7 +213,6 @@ export default function TableScanPro() {
   };
 
   const updateRegionLines = (id: string, vLines: TableLine[], hLines: TableLine[]) => {
-    // Update global pages state
     setPages(prev => prev.map(p => ({
       ...p,
       tableRegions: p.tableRegions.map(r => 
@@ -210,7 +220,6 @@ export default function TableScanPro() {
       )
     })));
 
-    // Sync local tableRegions state
     setTableRegions(prev => prev.map(r => 
       r.id === id ? { ...r, verticalLines: vLines, horizontalLines: hLines } : r
     ));
@@ -238,6 +247,12 @@ export default function TableScanPro() {
     setCurrentPageIndex(0);
   };
 
+  const toggleLang = (id: string) => {
+    setSelectedLangs(prev => 
+      prev.includes(id) ? prev.filter(l => l !== id) : [...prev, id]
+    );
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
@@ -251,19 +266,39 @@ export default function TableScanPro() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-card border px-3 py-2 rounded-lg shadow-sm">
-            <Languages size={18} className="text-muted-foreground" />
-            <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger className="w-40 border-0 shadow-none focus:ring-0">
-                <SelectValue placeholder="Language" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="eng">English</SelectItem>
-                <SelectItem value="chi_tra">Chinese (Trad)</SelectItem>
-                <SelectItem value="chi_sim">Chinese (Simp)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="flex items-center gap-2 bg-card border px-3 py-2 h-10 rounded-lg shadow-sm">
+                <Languages size={18} className="text-muted-foreground" />
+                <span className="text-sm font-medium">
+                  {selectedLangs.length === 0 
+                    ? "Select Languages" 
+                    : `${selectedLangs.length} Language${selectedLangs.length > 1 ? 's' : ''}`
+                  }
+                </span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-60 p-4" align="end">
+              <div className="space-y-4">
+                <h4 className="font-bold text-sm">OCR Languages</h4>
+                <div className="space-y-2">
+                  {SUPPORTED_LANGS.map((lang) => (
+                    <div key={lang.id} className="flex items-center space-x-2">
+                      <Checkbox 
+                        id={lang.id} 
+                        checked={selectedLangs.includes(lang.id)}
+                        onCheckedChange={() => toggleLang(lang.id)}
+                      />
+                      <Label htmlFor={lang.id} className="text-sm cursor-pointer font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                        {lang.label}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {status !== 'idle' && (
             <Button variant="ghost" onClick={reset} className="text-muted-foreground">
               <RotateCcw className="w-4 h-4 mr-2" /> Reset
@@ -364,6 +399,7 @@ export default function TableScanPro() {
                   <div className="space-y-2">
                     <h3 className="text-xl font-bold">Local OCR Processing</h3>
                     <p className="text-muted-foreground">Extracting text cell by cell using Tesseract.js</p>
+                    <p className="text-xs text-primary font-bold">Languages: {selectedLangs.join(', ')}</p>
                   </div>
                   <Progress value={progress} className="h-2 max-w-md mx-auto" />
                   <p className="text-sm font-bold text-primary">{progress}% Complete</p>
@@ -472,6 +508,7 @@ export default function TableScanPro() {
                       <Button 
                         className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
                         onClick={runOCR}
+                        disabled={selectedLangs.length === 0}
                       >
                         Process <ChevronRight className="ml-1 w-4 h-4" />
                       </Button>
@@ -497,6 +534,7 @@ export default function TableScanPro() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-xs text-muted-foreground space-y-3">
+                <p>• <b>Languages:</b> You can select multiple languages for mixed-content tables.</p>
                 <p>• <b>Step 2:</b> Draw boxes around tables. The list on the left shows all tables identified across all pages.</p>
                 <p>• <b>Step 3:</b> Refine the grid lines for each table before starting the OCR process.</p>
                 <p>• <b>Local:</b> All data extraction is handled locally in your browser.</p>
