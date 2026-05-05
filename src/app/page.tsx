@@ -163,7 +163,8 @@ export default function TableScanPro() {
 
     setStatus('detecting');
     try {
-      const { vLines: detectedV, hLines: detectedH } = await detectLines(currentPage.originalImage);
+      // Pass the current identified table regions to restrict the search
+      const { vLines: detectedV, hLines: detectedH } = await detectLines(currentPage.originalImage, tableRegions);
       setVLines(detectedV || []);
       setHLines(detectedH || []);
       setStatus('refining');
@@ -175,7 +176,7 @@ export default function TableScanPro() {
       setStatus('refining');
       toast({
         title: "Detection Limited",
-        description: "Automatic grid detection was unsuccessful. You can now add manual guides.",
+        description: "Automatic grid detection was unsuccessful in the selected regions. You can now add manual guides.",
       });
     }
   };
@@ -347,7 +348,7 @@ export default function TableScanPro() {
                     )}
                     <span className={status === 'ocr-processing' ? "text-primary" : "text-muted-foreground"}>
                       {status === 'selecting-tables' && !isDetecting && 'Mark table areas'}
-                      {status === 'detecting' && 'Analyzing structure...'}
+                      {status === 'detecting' && 'Analyzing regions...'}
                       {status === 'refining' && 'Fine-tune lines'}
                       {status === 'ocr-processing' && `OCR: ${progress}%`}
                     </span>
@@ -432,10 +433,15 @@ export default function TableScanPro() {
                     <Button 
                       className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
                       onClick={proceedToRefine}
-                      disabled={isDetecting}
+                      disabled={isDetecting || tableRegions.length === 0}
                     >
                       Analyze Regions <ScanSearch className="ml-2 w-5 h-5" />
                     </Button>
+                    {tableRegions.length === 0 && (
+                      <p className="text-[10px] text-center text-primary-foreground/60 italic">
+                        Draw at least one table region to continue
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -474,8 +480,8 @@ export default function TableScanPro() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-xs text-muted-foreground space-y-2">
+                <p>• <b>Precision:</b> Detection is now focused only on your identified regions.</p>
                 <p>• <b>Multi-Page:</b> Use the left sidebar to switch between document pages.</p>
-                <p>• <b>Regions:</b> Adjust detected tables or draw new ones manually.</p>
                 <p>• <b>Wireless:</b> For tables without lines, add vertical/horizontal guides manually in Step 3.</p>
               </CardContent>
             </Card>

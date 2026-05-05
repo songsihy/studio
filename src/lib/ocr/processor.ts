@@ -76,9 +76,10 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 }
 
 /**
- * Detects table lines using OpenCV.js morphological operations
+ * Detects table lines using OpenCV.js morphological operations.
+ * If regions are provided, detection is restricted to those specific areas.
  */
-export async function detectLines(imageSrc: string): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
+export async function detectLines(imageSrc: string, regions?: TableRegion[]): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
@@ -95,61 +96,89 @@ export async function detectLines(imageSrc: string): Promise<{ vLines: TableLine
         const binary = new cv.Mat();
         cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-        // Define kernels for horizontal and vertical lines
-        const horizontalSize = Math.floor(binary.cols / 30);
-        const horizontalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(horizontalSize, 1));
-        const verticalSize = Math.floor(binary.rows / 30);
-        const verticalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, verticalSize));
-
-        // Extract horizontal lines
-        const horizontal = new cv.Mat();
-        cv.erode(binary, horizontal, horizontalStructure);
-        cv.dilate(horizontal, horizontal, horizontalStructure);
-
-        // Extract vertical lines
-        const vertical = new cv.Mat();
-        cv.erode(binary, vertical, verticalStructure);
-        cv.dilate(vertical, vertical, verticalStructure);
-
-        // Find positions by averaging white pixels
         const vPositions: number[] = [];
         const hPositions: number[] = [];
 
-        // Simplified line detection: look for peaks in the projections
-        for (let j = 0; j < vertical.cols; j++) {
-          let count = 0;
-          for (let i = 0; i < vertical.rows; i++) {
-            if (vertical.ucharPtr(i, j)[0] > 128) count++;
-          }
-          if (count > vertical.rows * 0.7) vPositions.push((j / vertical.cols) * 100);
-        }
+        // Helper to detect lines in a specific matrix
+        const detectInMat = (mat: any, offsetX: number, offsetY: number, width: number, height: number, totalW: number, totalH: number) => {
+          const horizontalSize = Math.max(2, Math.floor(width / 30));
+          const horizontalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(horizontalSize, 1));
+          const verticalSize = Math.max(2, Math.floor(height / 30));
+          const verticalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, verticalSize));
 
-        for (let i = 0; i < horizontal.rows; i++) {
-          let count = 0;
-          for (let j = 0; j < horizontal.cols; j++) {
-            if (horizontal.ucharPtr(i, j)[0] > 128) count++;
+          const horizontal = new cv.Mat();
+          cv.erode(mat, horizontal, horizontalStructure);
+          cv.dilate(horizontal, horizontal, horizontalStructure);
+
+          const vertical = new cv.Mat();
+          cv.erode(mat, vertical, verticalStructure);
+          cv.dilate(vertical, vertical, verticalStructure);
+
+          for (let j = 0; j < vertical.cols; j++) {
+            let count = 0;
+            for (let i = 0; i < vertical.rows; i++) {
+              if (vertical.ucharPtr(i, j)[0] > 128) count++;
+            }
+            if (count > vertical.rows * 0.7) vPositions.push(((offsetX + j) / totalW) * 100);
           }
-          if (count > horizontal.cols * 0.7) hPositions.push((i / horizontal.rows) * 100);
+
+          for (let i = 0; i < horizontal.rows; i++) {
+            let count = 0;
+            for (let j = 0; j < horizontal.cols; j++) {
+              if (horizontal.ucharPtr(i, j)[0] > 128) count++;
+            }
+            if (count > horizontal.cols * 0.7) hPositions.push(((offsetY + i) / totalH) * 100);
+          }
+
+          horizontal.delete(); vertical.delete();
+          horizontalStructure.delete(); verticalStructure.delete();
+        };
+
+        if (regions && regions.length > 0) {
+          // Detect lines only within identified table regions
+          regions.forEach(r => {
+            let x = Math.floor((r.x / 100) * binary.cols);
+            let y = Math.floor((r.y / 100) * binary.rows);
+            let w = Math.floor((r.width / 100) * binary.cols);
+            let h = Math.floor((r.height / 100) * binary.rows);
+
+            // Boundary checks
+            x = Math.max(0, x); y = Math.max(0, y);
+            w = Math.min(binary.cols - x, w);
+            h = Math.min(binary.rows - y, h);
+
+            if (w > 0 && h > 0) {
+              const rect = new cv.Rect(x, y, w, h);
+              const roi = binary.roi(rect);
+              detectInMat(roi, x, y, w, h, binary.cols, binary.rows);
+              roi.delete();
+            }
+          });
+        } else {
+          // Global detection fallback
+          detectInMat(binary, 0, 0, binary.cols, binary.rows, binary.cols, binary.rows);
         }
 
         // Clean up duplicates (lines very close to each other)
         const filterLines = (lines: number[]) => {
-          return lines.filter((pos, idx) => {
+          const unique = Array.from(new Set(lines)).sort((a, b) => a - b);
+          return unique.filter((pos, idx) => {
             if (idx === 0) return true;
-            return Math.abs(pos - lines[idx - 1]) > 2;
+            return Math.abs(pos - unique[idx - 1]) > 0.5;
           });
         };
 
-        const vLines: TableLine[] = filterLines(vPositions.sort((a, b) => a - b)).map((p, i) => ({
-          id: `v-${i}`, type: 'vertical', position: p
+        const filteredV = filterLines(vPositions);
+        const filteredH = filterLines(hPositions);
+
+        const vLines: TableLine[] = filteredV.map((p, i) => ({
+          id: `v-${i}-${Date.now()}`, type: 'vertical', position: p
         }));
-        const hLines: TableLine[] = filterLines(hPositions.sort((a, b) => a - b)).map((p, i) => ({
-          id: `h-${i}`, type: 'horizontal', position: p
+        const hLines: TableLine[] = filteredH.map((p, i) => ({
+          id: `h-${i}-${Date.now()}`, type: 'horizontal', position: p
         }));
 
-        src.delete(); gray.delete(); binary.delete(); horizontal.delete(); vertical.delete();
-        horizontalStructure.delete(); verticalStructure.delete();
-
+        src.delete(); gray.delete(); binary.delete();
         resolve({ vLines, hLines });
       } catch (err) {
         reject(err);
