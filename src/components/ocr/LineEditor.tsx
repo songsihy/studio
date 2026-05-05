@@ -1,9 +1,10 @@
+
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Loader2, Trash2, MousePointer2, Info } from 'lucide-react';
+import { Plus, X, Trash2, MousePointer2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -11,33 +12,29 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface LineEditorProps {
   imageSrc: string | null;
+  cropRect: { x: number; y: number; width: number; height: number }; // percentages
   vLines: TableLine[];
   hLines: TableLine[];
   onLinesChange: (vLines: TableLine[], hLines: TableLine[]) => void;
+  title: string;
 }
 
-export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines, onLinesChange }) => {
+export const LineEditor: React.FC<LineEditorProps> = ({ 
+  imageSrc, 
+  cropRect, 
+  vLines, 
+  hLines, 
+  onLinesChange,
+  title
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState<{ id: string; type: 'v' | 'h' } | null>(null);
   const [addMode, setAddMode] = useState<'v' | 'h' | null>(null);
-  const [cvReady, setCvReady] = useState(false);
 
-  useEffect(() => {
-    const checkCV = () => {
-      if (typeof window !== 'undefined' && (window as any).cv) {
-        setCvReady(true);
-      } else {
-        setTimeout(checkCV, 500);
-      }
-    };
-    checkCV();
-  }, []);
-
-  const addLine = (type: 'vertical' | 'horizontal', position: number = 50) => {
+  const addLine = (type: 'vertical' | 'horizontal', position: number) => {
     const newLine: TableLine = {
       id: Math.random().toString(36).substr(2, 9),
       type,
@@ -110,152 +107,117 @@ export const LineEditor: React.FC<LineEditorProps> = ({ imageSrc, vLines, hLines
     setActiveLine(null);
   };
 
+  if (!imageSrc) return null;
+
   return (
-    <div className="flex flex-col gap-4">
-      {!cvReady && (
-        <Alert className="bg-primary/5 border-primary/20">
-          <Info className="h-4 w-4 text-primary" />
-          <AlertDescription className="text-xs text-primary font-medium flex items-center gap-2">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            OpenCV.js is initializing for advanced line detection...
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <TooltipProvider>
-        <div className="flex flex-wrap justify-between items-center bg-card p-3 rounded-lg border shadow-sm gap-4">
-          <div className="flex flex-wrap gap-2">
-            <div className="flex items-center bg-muted/50 p-1 rounded-md border">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    size="sm" 
-                    variant={addMode === 'v' ? "secondary" : "ghost"} 
-                    onClick={() => setAddMode(addMode === 'v' ? null : 'v')}
-                    className="h-8"
-                  >
-                    <Plus className="w-4 h-4 mr-1" /> Vertical
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Click on image to add vertical line</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" variant="ghost" onClick={() => clearLines('v')} className="h-8 text-destructive hover:text-destructive">
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Clear all vertical lines</TooltipContent>
-              </Tooltip>
-            </div>
-
-            <div className="flex items-center bg-muted/50 p-1 rounded-md border">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    size="sm" 
-                    variant={addMode === 'h' ? "secondary" : "ghost"} 
-                    onClick={() => setAddMode(addMode === 'h' ? null : 'h')}
-                    className="h-8"
-                  >
-                    <Plus className="w-4 h-4 mr-1" /> Horizontal
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Click on image to add horizontal line</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" variant="ghost" onClick={() => clearLines('h')} className="h-8 text-destructive hover:text-destructive">
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Clear all horizontal lines</TooltipContent>
-              </Tooltip>
-            </div>
+    <div className="space-y-4 border rounded-xl p-4 bg-muted/10 shadow-sm">
+      <div className="flex flex-wrap justify-between items-center gap-4">
+        <h3 className="font-bold text-sm text-primary uppercase tracking-tight">{title}</h3>
+        <TooltipProvider>
+          <div className="flex gap-2 bg-card p-1 rounded-md border shadow-sm">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant={addMode === 'v' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'v' ? null : 'v')} className="h-8">
+                  <Plus className="w-4 h-4 mr-1" /> Vertical
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Click to add vertical guide</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant="ghost" onClick={() => clearLines('v')} className="h-8 text-destructive">
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Clear verticals</TooltipContent>
+            </Tooltip>
+            <div className="w-px bg-border mx-1" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant={addMode === 'h' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'h' ? null : 'h')} className="h-8">
+                  <Plus className="w-4 h-4 mr-1" /> Horizontal
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Click to add horizontal guide</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant="ghost" onClick={() => clearLines('h')} className="h-8 text-destructive">
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Clear horizontals</TooltipContent>
+            </Tooltip>
           </div>
-          
-          <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
-            <MousePointer2 className="w-3 h-3" />
-            {addMode ? `Click to add ${addMode === 'v' ? 'vertical' : 'horizontal'} line` : 'Drag lines to refine grid'}
-          </div>
-        </div>
-      </TooltipProvider>
+        </TooltipProvider>
+      </div>
 
       <div 
         ref={containerRef}
         className={cn(
-          "relative border rounded-xl overflow-hidden bg-white select-none flex items-center justify-center",
-          addMode && "cursor-crosshair",
-          !addMode && "cursor-default"
+          "relative border rounded-lg overflow-hidden bg-white select-none cursor-crosshair group shadow-inner",
+          addMode && "ring-2 ring-primary/20"
         )}
         onClick={handleContainerClick}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        style={{ minHeight: '400px' }}
+        style={{ height: '300px' }}
       >
-        {imageSrc ? (
-          <>
-            <img 
-              src={imageSrc} 
-              alt="Original Document" 
-              className="w-full h-auto block pointer-events-none"
-            />
-            
-            {/* Vertical Lines */}
-            {vLines.map(line => (
-              <div
-                key={line.id}
-                className={cn(
-                  "absolute top-0 bottom-0 w-2 -ml-1 cursor-col-resize group z-20",
-                  activeLine?.id === line.id ? "bg-primary" : "bg-primary/25 hover:bg-primary/60"
-                )}
-                style={{ left: `${line.position}%` }}
-                onMouseDown={(e) => handleMouseDown(line.id, 'v', e)}
-              >
-                <div className="absolute top-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-30">
-                  <Button 
-                    size="icon" 
-                    variant="destructive" 
-                    className="h-5 w-5 rounded-full shadow-md" 
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'v'); }}
-                  >
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+        <div 
+          className="absolute inset-0 bg-no-repeat pointer-events-none"
+          style={{
+            backgroundImage: `url(${imageSrc})`,
+            backgroundSize: `${10000 / cropRect.width}% ${10000 / cropRect.height}%`,
+            backgroundPosition: `${(cropRect.x / (100 - cropRect.width)) * 100}% ${(cropRect.y / (100 - cropRect.height)) * 100}%`
+          }}
+        />
 
-            {/* Horizontal Lines */}
-            {hLines.map(line => (
-              <div
-                key={line.id}
-                className={cn(
-                  "absolute left-0 right-0 h-2 -mt-1 cursor-row-resize group z-20",
-                  activeLine?.id === line.id ? "bg-primary" : "bg-primary/25 hover:bg-primary/60"
-                )}
-                style={{ top: `${line.position}%` }}
-                onMouseDown={(e) => handleMouseDown(line.id, 'h', e)}
-              >
-                <div className="absolute left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-30">
-                  <Button 
-                    size="icon" 
-                    variant="destructive" 
-                    className="h-5 w-5 rounded-full shadow-md" 
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'h'); }}
-                  >
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </>
-        ) : (
-          <div className="flex flex-col items-center gap-2 text-muted-foreground">
-            <Loader2 className="w-8 h-8 animate-spin" />
-            <p className="text-sm font-medium">Preparing document view...</p>
+        {/* Vertical Lines */}
+        {vLines.map(line => (
+          <div
+            key={line.id}
+            className={cn(
+              "absolute top-0 bottom-0 w-1.5 -ml-0.75 cursor-col-resize group z-20",
+              activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/70"
+            )}
+            style={{ left: `${line.position}%` }}
+            onMouseDown={(e) => handleMouseDown(line.id, 'v', e)}
+          >
+            <button 
+              className="absolute top-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 bg-destructive text-white rounded-full p-0.5 hover:scale-110 transition-all shadow-lg"
+              onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'v'); }}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+
+        {/* Horizontal Lines */}
+        {hLines.map(line => (
+          <div
+            key={line.id}
+            className={cn(
+              "absolute left-0 right-0 h-1.5 -mt-0.75 cursor-row-resize group z-20",
+              activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/70"
+            )}
+            style={{ top: `${line.position}%` }}
+            onMouseDown={(e) => handleMouseDown(line.id, 'h', e)}
+          >
+            <button 
+              className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 bg-destructive text-white rounded-full p-0.5 hover:scale-110 transition-all shadow-lg"
+              onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'h'); }}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+
+        {addMode && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-primary/5">
+            <span className="bg-primary text-white text-[10px] px-2 py-1 rounded-full shadow-lg font-bold">
+              {addMode === 'v' ? 'Adding Vertical Line' : 'Adding Horizontal Line'}
+            </span>
           </div>
         )}
       </div>

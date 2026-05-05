@@ -4,7 +4,7 @@ export type ProcessingStatus = 'idle' | 'uploading' | 'selecting-tables' | 'dete
 export interface TableLine {
   id: string;
   type: 'vertical' | 'horizontal';
-  position: number; // percentage (0-100)
+  position: number; // percentage (0-100) relative to the container
 }
 
 export interface TableRegion {
@@ -14,6 +14,8 @@ export interface TableRegion {
   y: number; // percentage
   width: number; // percentage
   height: number; // percentage
+  verticalLines?: TableLine[];
+  horizontalLines?: TableLine[];
 }
 
 export interface TableCell {
@@ -25,6 +27,7 @@ export interface TableCell {
 
 export interface ExtractedTable {
   id: string;
+  tableName: string;
   rows: string[][];
   headers: string[];
 }
@@ -33,6 +36,4 @@ export interface DocumentPage {
   id: string;
   originalImage: string; // Data URI
   tableRegions: TableRegion[];
-  verticalLines: TableLine[];
-  horizontalLines: TableLine[];
 }
