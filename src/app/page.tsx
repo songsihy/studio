@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   FileText, 
   Table as TableIcon, 
   Download, 
   Settings, 
-  Layers, 
   Languages, 
   ChevronRight,
   RotateCcw,
@@ -32,18 +31,13 @@ import {
   downloadFile 
 } from '@/lib/ocr/exporter';
 import { 
-  Tabs, 
-  TabsContent, 
-  TabsList, 
-  TabsTrigger 
-} from "@/components/ui/tabs";
-import { 
   Select, 
   SelectContent, 
   SelectItem, 
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
+import { extractTable } from '@/ai/flows/extract-table-flow';
 
 export default function TableScanPro() {
   const [status, setStatus] = useState<ProcessingStatus>('idle');
@@ -57,64 +51,90 @@ export default function TableScanPro() {
 
   const handleFiles = async (files: File[]) => {
     setStatus('uploading');
-    // Simulated PDF/Image processing
-    // In a real app, use pdf.js here to render pages
-    const newPages: DocumentPage[] = await Promise.all(files.map(async (file, idx) => {
-      return {
-        id: `page-${idx}`,
-        originalImage: URL.createObjectURL(file),
-        detectedTables: [],
-        verticalLines: [],
-        horizontalLines: []
-      };
-    }));
-
-    setPages(newPages);
-    setCurrentPageIndex(0);
-    setStatus('detecting');
     
-    // Auto-detect table logic (Simulated OpenCV call)
-    setTimeout(() => {
-      const initialVLines: TableLine[] = [
-        { id: 'v1', type: 'vertical', position: 10 },
-        { id: 'v2', type: 'vertical', position: 40 },
-        { id: 'v3', type: 'vertical', position: 70 },
-        { id: 'v4', type: 'vertical', position: 90 },
-      ];
-      const initialHLines: TableLine[] = [
-        { id: 'h1', type: 'horizontal', position: 15 },
-        { id: 'h2', type: 'horizontal', position: 35 },
-        { id: 'h3', type: 'horizontal', position: 55 },
-        { id: 'h4', type: 'horizontal', position: 75 },
-      ];
-      setVLines(initialVLines);
-      setHLines(initialHLines);
-      setStatus('refining');
+    try {
+      const newPages: DocumentPage[] = await Promise.all(files.map(async (file, idx) => {
+        return new Promise<DocumentPage>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            resolve({
+              id: `page-${idx}-${Date.now()}`,
+              originalImage: e.target?.result as string,
+              detectedTables: [],
+              verticalLines: [],
+              horizontalLines: []
+            });
+          };
+          reader.readAsDataURL(file);
+        });
+      }));
+
+      setPages(newPages);
+      setCurrentPageIndex(0);
+      setStatus('detecting');
+      
+      // Initial detection state
+      setTimeout(() => {
+        const initialVLines: TableLine[] = [
+          { id: 'v1', type: 'vertical', position: 20 },
+          { id: 'v2', type: 'vertical', position: 50 },
+          { id: 'v3', type: 'vertical', position: 80 },
+        ];
+        const initialHLines: TableLine[] = [
+          { id: 'h1', type: 'horizontal', position: 30 },
+          { id: 'h2', type: 'horizontal', position: 60 },
+        ];
+        setVLines(initialVLines);
+        setHLines(initialHLines);
+        setStatus('refining');
+        toast({
+          title: "Document Loaded",
+          description: "Adjust the grid lines to help guide the extraction if needed.",
+        });
+      }, 1000);
+    } catch (err) {
+      console.error(err);
+      setStatus('error');
       toast({
-        title: "Table Detected",
-        description: "Review and adjust the grid lines for maximum accuracy.",
+        variant: "destructive",
+        title: "Upload Failed",
+        description: "There was an error processing your files.",
       });
-    }, 1500);
+    }
   };
 
   const runOCR = async () => {
+    const currentPage = pages[currentPageIndex];
+    if (!currentPage?.originalImage) return;
+
     setStatus('ocr-processing');
-    // Simulated Tesseract.js call per cell
-    setTimeout(() => {
-      const mockRows = [
-        ['Date', 'Transaction', 'Amount', 'Status'],
-        ['2023-01-01', 'Server Subscription', '$120.00', 'Paid'],
-        ['2023-01-05', 'Domain Renewal', '$20.00', 'Pending'],
-        ['2023-01-12', 'Cloud Storage', '$5.00', 'Paid'],
-        ['2023-01-20', 'Support Plan', '$45.00', 'Paid'],
-      ];
-      setExtractedData({ id: 'table-1', rows: mockRows, headers: mockRows[0] });
+    
+    try {
+      const result = await extractTable({
+        imageUri: currentPage.originalImage,
+        language: language
+      });
+
+      setExtractedData({ 
+        id: `table-${Date.now()}`, 
+        rows: [result.headers, ...result.rows], 
+        headers: result.headers 
+      });
+      
       setStatus('completed');
       toast({
         title: "Extraction Complete",
-        description: "Table data has been extracted successfully.",
+        description: "Table data has been extracted successfully from the image.",
       });
-    }, 2500);
+    } catch (error) {
+      console.error(error);
+      setStatus('error');
+      toast({
+        variant: "destructive",
+        title: "OCR Error",
+        description: "Failed to extract table data. Please check the image clarity.",
+      });
+    }
   };
 
   const handleExport = (format: 'csv' | 'json' | 'md' | 'html') => {
@@ -138,11 +158,13 @@ export default function TableScanPro() {
     setPages([]);
     setExtractedData(null);
     setStatus('idle');
+    setVLines([]);
+    setHLines([]);
   };
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
-      <header className="flex justify-between items-center mb-10">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary/20">
             <TableIcon size={28} />
@@ -153,17 +175,19 @@ export default function TableScanPro() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-card border px-3 py-2 rounded-lg shadow-sm">
+        <div className="flex items-center gap-4 w-full md:w-auto">
+          <div className="flex items-center gap-2 bg-card border px-3 py-2 rounded-lg shadow-sm flex-1 md:flex-none">
             <Languages size={18} className="text-muted-foreground" />
             <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger className="w-40 border-0 shadow-none focus:ring-0">
+              <SelectTrigger className="w-full md:w-40 border-0 shadow-none focus:ring-0">
                 <SelectValue placeholder="Language" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="eng">English</SelectItem>
                 <SelectItem value="chi_tra">Traditional Chinese</SelectItem>
                 <SelectItem value="chi_sim">Simplified Chinese</SelectItem>
+                <SelectItem value="spa">Spanish</SelectItem>
+                <SelectItem value="fra">French</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -178,21 +202,22 @@ export default function TableScanPro() {
       <main className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-8 space-y-6">
           {status === 'idle' ? (
-            <DropZone onFilesSelected={handleFiles} isLoading={status !== 'idle' && status !== 'error'} />
+            <DropZone onFilesSelected={handleFiles} isLoading={status === 'uploading'} />
           ) : (
             <Card className="border-2 shadow-xl overflow-hidden">
               <CardHeader className="bg-muted/30 border-b">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <FileText className="text-primary w-5 h-5" />
-                    <CardTitle className="text-lg">Document Editor</CardTitle>
+                    <CardTitle className="text-lg">Document Preview</CardTitle>
                   </div>
                   <div className="flex items-center gap-2 text-sm font-medium">
-                    <span className={status === 'refining' ? "text-primary animate-pulse" : ""}>
-                      {status === 'detecting' && 'Detecting Tables...'}
-                      {status === 'refining' && 'Refining Boundaries'}
-                      {status === 'ocr-processing' && 'Processing OCR...'}
+                    <span className={status === 'ocr-processing' ? "text-primary animate-pulse" : "text-muted-foreground"}>
+                      {status === 'detecting' && 'Initializing...'}
+                      {status === 'refining' && 'Ready for Extraction'}
+                      {status === 'ocr-processing' && 'AI Extraction in Progress...'}
                       {status === 'completed' && 'Processing Complete'}
+                      {status === 'error' && 'An Error Occurred'}
                     </span>
                   </div>
                 </div>
@@ -224,7 +249,7 @@ export default function TableScanPro() {
                   </div>
                   <div className="flex-1">
                     <p className="font-semibold text-sm">Upload Document</p>
-                    <p className="text-xs text-primary-foreground/70">Single/Multi PDF or Image files</p>
+                    <p className="text-xs text-primary-foreground/70">Images (JPEG, PNG) or PDFs</p>
                   </div>
                 </div>
 
@@ -233,8 +258,8 @@ export default function TableScanPro() {
                     {status === 'ocr-processing' || status === 'completed' ? <CheckCircle2 size={16} /> : '2'}
                   </div>
                   <div className="flex-1">
-                    <p className="font-semibold text-sm">Detect & Guide</p>
-                    <p className="text-xs text-primary-foreground/70">Automatic grid detection & manual refining</p>
+                    <p className="font-semibold text-sm">Analyze Image</p>
+                    <p className="text-xs text-primary-foreground/70">AI identifies table structure</p>
                   </div>
                 </div>
 
@@ -243,18 +268,23 @@ export default function TableScanPro() {
                     {status === 'completed' ? <CheckCircle2 size={16} /> : '3'}
                   </div>
                   <div className="flex-1">
-                    <p className="font-semibold text-sm">Extract Data</p>
-                    <p className="text-xs text-primary-foreground/70">Run multi-language OCR on table cells</p>
+                    <p className="font-semibold text-sm">Extract & Export</p>
+                    <p className="text-xs text-primary-foreground/70">Get data in your favorite format</p>
                   </div>
                 </div>
               </div>
 
-              {status === 'refining' && (
+              {(status === 'refining' || status === 'error') && (
                 <Button 
                   className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 text-lg rounded-xl shadow-lg"
                   onClick={runOCR}
                 >
-                  Start OCR Extraction <ChevronRight className="ml-2 w-5 h-5" />
+                  Start AI Extraction <ChevronRight className="ml-2 w-5 h-5" />
+                </Button>
+              )}
+              {status === 'ocr-processing' && (
+                <Button disabled className="w-full py-6 text-lg rounded-xl bg-secondary/50">
+                  <span className="animate-pulse">Processing...</span>
                 </Button>
               )}
             </CardContent>
@@ -266,31 +296,31 @@ export default function TableScanPro() {
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Download className="text-secondary w-5 h-5" /> Export Data
                 </CardTitle>
-                <CardDescription>Select your preferred output format</CardDescription>
+                <CardDescription>Get your structured results</CardDescription>
               </CardHeader>
               <CardContent className="p-4 grid grid-cols-2 gap-3">
                 <Button variant="outline" className="justify-start h-auto py-3 px-4 border-2 hover:border-primary hover:bg-primary/5" onClick={() => handleExport('html')}>
                   <div className="text-left">
                     <p className="font-bold text-sm">HTML</p>
-                    <p className="text-[10px] text-muted-foreground">Web Format</p>
+                    <p className="text-[10px] text-muted-foreground">Web View</p>
                   </div>
                 </Button>
                 <Button variant="outline" className="justify-start h-auto py-3 px-4 border-2 hover:border-primary hover:bg-primary/5" onClick={() => handleExport('csv')}>
                   <div className="text-left">
                     <p className="font-bold text-sm">CSV</p>
-                    <p className="text-[10px] text-muted-foreground">Spreadsheet</p>
+                    <p className="text-[10px] text-muted-foreground">Excel/Sheets</p>
                   </div>
                 </Button>
                 <Button variant="outline" className="justify-start h-auto py-3 px-4 border-2 hover:border-primary hover:bg-primary/5" onClick={() => handleExport('json')}>
                   <div className="text-left">
                     <p className="font-bold text-sm">JSON</p>
-                    <p className="text-[10px] text-muted-foreground">Data Structure</p>
+                    <p className="text-[10px] text-muted-foreground">Developer API</p>
                   </div>
                 </Button>
                 <Button variant="outline" className="justify-start h-auto py-3 px-4 border-2 hover:border-primary hover:bg-primary/5" onClick={() => handleExport('md')}>
                   <div className="text-left">
                     <p className="font-bold text-sm">Markdown</p>
-                    <p className="text-[10px] text-muted-foreground">Documentation</p>
+                    <p className="text-[10px] text-muted-foreground">Wiki/Docs</p>
                   </div>
                 </Button>
               </CardContent>
@@ -300,13 +330,13 @@ export default function TableScanPro() {
           <Card className="border-none shadow-lg">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <AlertCircle className="text-muted-foreground w-5 h-5" /> Tips
+                <AlertCircle className="text-muted-foreground w-5 h-5" /> Pro Tips
               </CardTitle>
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground space-y-2">
-              <p>• For tables with <b>wireless</b> lines, use the manual guides to mark columns based on text alignment.</p>
-              <p>• Higher resolution images provide better OCR results for Chinese characters.</p>
-              <p>• You can process multiple pages simultaneously and merge the results.</p>
+              <p>• <b>Image Quality:</b> Ensure good lighting and straight alignment for better results.</p>
+              <p>• <b>Language:</b> Select the correct language to help the AI recognize specific characters.</p>
+              <p>• <b>Complex Tables:</b> Gemini handles nested headers and merged cells automatically.</p>
             </CardContent>
           </Card>
         </div>
@@ -318,20 +348,20 @@ export default function TableScanPro() {
             <CardHeader className="bg-muted/20 border-b flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-xl">Extraction Preview</CardTitle>
-                <CardDescription>Real-time result of the OCR processing</CardDescription>
+                <CardDescription>Data extracted by Gemini Vision Pro</CardDescription>
               </div>
               <div className="flex gap-2">
                 <div className="px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold border border-primary/20">
-                  {language === 'eng' ? 'English' : 'Chinese'} Engine
+                  AI Model: Gemini 2.5 Flash
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-0 overflow-auto max-h-[500px]">
+            <CardContent className="p-0 overflow-auto max-h-[600px]">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm shadow-sm z-30">
                   <tr>
                     {extractedData.headers.map((h, i) => (
-                      <th key={i} className="px-6 py-4 text-left font-bold border-b border-r last:border-r-0 uppercase tracking-wider text-xs">
+                      <th key={i} className="px-6 py-4 text-left font-bold border-b border-r last:border-r-0 uppercase tracking-wider text-xs bg-muted/50">
                         {h}
                       </th>
                     ))}
