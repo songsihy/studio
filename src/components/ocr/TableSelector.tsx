@@ -2,21 +2,31 @@
 "use client";
 
 import React, { useState, useRef } from 'react';
-import { TableRegion } from '@/lib/ocr-types';
+import { TableRegion, DocumentPage } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { X, Plus, Loader2, ListTodo, Type } from 'lucide-react';
+import { X, Plus, Loader2, ListTodo, Type, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
 
 interface TableSelectorProps {
   imageSrc: string | null;
   regions: TableRegion[];
   onRegionsChange: (regions: TableRegion[]) => void;
+  allPages: DocumentPage[];
+  currentPageIndex: number;
+  onNavigateToPage: (index: number) => void;
 }
 
-export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions, onRegionsChange }) => {
+export const TableSelector: React.FC<TableSelectorProps> = ({ 
+  imageSrc, 
+  regions, 
+  onRegionsChange,
+  allPages,
+  currentPageIndex,
+  onNavigateToPage
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
@@ -24,7 +34,6 @@ export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions,
   const [hoveredRegionId, setHoveredRegionId] = useState<string | null>(null);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Prevent drawing if clicking on a UI button or input
     if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) return;
 
     if (!containerRef.current) return;
@@ -61,6 +70,8 @@ export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions,
         y: Math.min(startPos.y, currentPos.y),
         width,
         height,
+        verticalLines: [],
+        horizontalLines: []
       };
       onRegionsChange([...regions, newRegion]);
     }
@@ -74,67 +85,95 @@ export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions,
     onRegionsChange(regions.filter(r => r.id !== id));
   };
 
-  const clearAll = () => {
-    onRegionsChange([]);
-  };
-
   return (
     <div className="flex flex-col lg:flex-row gap-6 p-4">
-      {/* Table Management Panel */}
-      <Card className="w-full lg:w-72 border-none shadow-none bg-muted/30">
+      {/* Table Management Panel - Global List */}
+      <Card className="w-full lg:w-80 border-none shadow-none bg-muted/30">
         <CardContent className="p-4 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold flex items-center gap-2">
-              <ListTodo size={16} className="text-primary" /> Identified Tables
+              <ListTodo size={16} className="text-primary" /> All Identified Tables
             </h3>
-            {regions.length > 0 && (
-              <Button size="icon" variant="ghost" onClick={clearAll} className="h-6 w-6 text-destructive">
-                <X size={14} />
-              </Button>
-            )}
           </div>
           
-          <ScrollArea className="h-[400px] pr-2">
-            <div className="space-y-3">
-              {regions.length === 0 ? (
-                <p className="text-xs text-muted-foreground italic text-center py-10">
-                  No tables identified. Draw rectangles on the document.
-                </p>
-              ) : (
-                regions.map((region, idx) => (
-                  <div 
-                    key={region.id}
-                    onMouseEnter={() => setHoveredRegionId(region.id)}
-                    onMouseLeave={() => setHoveredRegionId(null)}
-                    className={cn(
-                      "p-3 rounded-lg border bg-card transition-all",
-                      hoveredRegionId === region.id ? "border-primary ring-1 ring-primary/20" : "border-border"
-                    )}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                        Table #{idx + 1}
+          <ScrollArea className="h-[500px] pr-2">
+            <div className="space-y-6">
+              {allPages.map((page, pIdx) => {
+                const pageRegions = pIdx === currentPageIndex ? regions : (page.tableRegions || []);
+                if (pageRegions.length === 0) return null;
+
+                return (
+                  <div key={page.id} className="space-y-2">
+                    <div className="flex items-center gap-2 px-1">
+                      <FileText size={12} className="text-muted-foreground" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Page {pIdx + 1}
                       </span>
-                      <Button 
-                        size="icon" 
-                        variant="ghost" 
-                        className="h-5 w-5 text-muted-foreground hover:text-destructive"
-                        onClick={() => removeRegion(region.id)}
-                      >
-                        <X size={12} />
-                      </Button>
+                      <Badge variant="outline" className="h-4 px-1.5 text-[9px] ml-auto">
+                        {pageRegions.length}
+                      </Badge>
                     </div>
-                    <div className="flex items-center gap-2 bg-muted/50 rounded p-1.5 border border-transparent focus-within:border-primary/30 transition-colors">
-                      <Type size={12} className="text-muted-foreground shrink-0" />
-                      <input
-                        value={region.name}
-                        onChange={(e) => updateRegionName(region.id, e.target.value)}
-                        className="bg-transparent border-none text-xs font-semibold focus:outline-none w-full"
-                        placeholder="Table name..."
-                      />
+
+                    <div className="space-y-2 pl-2 border-l-2 border-muted">
+                      {pageRegions.map((region, rIdx) => (
+                        <div 
+                          key={region.id}
+                          onMouseEnter={() => pIdx === currentPageIndex && setHoveredRegionId(region.id)}
+                          onMouseLeave={() => setHoveredRegionId(null)}
+                          onClick={() => pIdx !== currentPageIndex && onNavigateToPage(pIdx)}
+                          className={cn(
+                            "p-2 rounded-md border bg-card transition-all cursor-pointer group",
+                            pIdx === currentPageIndex && hoveredRegionId === region.id 
+                              ? "border-primary ring-1 ring-primary/20" 
+                              : "border-border hover:border-primary/50",
+                            pIdx !== currentPageIndex && "opacity-80"
+                          )}
+                        >
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[9px] font-bold text-muted-foreground">
+                              {region.name}
+                            </span>
+                            {pIdx === currentPageIndex && (
+                              <Button 
+                                size="icon" 
+                                variant="ghost" 
+                                className="h-4 w-4 text-muted-foreground hover:text-destructive"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeRegion(region.id);
+                                }}
+                              >
+                                <X size={10} />
+                              </Button>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 bg-muted/50 rounded p-1 border border-transparent focus-within:border-primary/30">
+                            <Type size={10} className="text-muted-foreground" />
+                            <input
+                              value={region.name}
+                              disabled={pIdx !== currentPageIndex}
+                              onChange={(e) => updateRegionName(region.id, e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="bg-transparent border-none text-[11px] font-semibold focus:outline-none w-full disabled:cursor-not-allowed"
+                              placeholder="Name..."
+                            />
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))
+                );
+              })}
+
+              {allPages.every(p => (p.tableRegions?.length || 0) === 0) && regions.length === 0 && (
+                <div className="p-10 text-center space-y-2">
+                  <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mx-auto text-muted-foreground">
+                    <Plus size={20} />
+                  </div>
+                  <p className="text-xs text-muted-foreground italic">
+                    No tables identified yet.
+                  </p>
+                </div>
               )}
             </div>
           </ScrollArea>
@@ -146,7 +185,7 @@ export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions,
         <div className="flex justify-between items-center bg-card p-2 px-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
             <Plus className="w-3 h-3 text-primary" />
-            Click and drag on the image to define table boundaries
+            Page {currentPageIndex + 1}: Draw rectangles to define table boundaries
           </div>
         </div>
 
@@ -167,7 +206,7 @@ export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions,
                 className="w-full h-auto block pointer-events-none"
               />
               
-              {/* Existing Regions */}
+              {/* Existing Regions for current page */}
               {regions.map(region => (
                 <div
                   key={region.id}
@@ -191,20 +230,6 @@ export const TableSelector: React.FC<TableSelectorProps> = ({ imageSrc, regions,
                     hoveredRegionId === region.id ? "opacity-100" : "opacity-0"
                   )}>
                     {region.name}
-                  </div>
-                  <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-50">
-                    <Button 
-                      size="icon" 
-                      variant="destructive" 
-                      className="h-6 w-6 rounded-full shadow-lg" 
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => { 
-                        e.stopPropagation(); 
-                        removeRegion(region.id); 
-                      }}
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
                   </div>
                 </div>
               ))}

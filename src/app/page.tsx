@@ -65,7 +65,7 @@ export default function TableScanPro() {
 
   const currentPage = pages[currentPageIndex];
 
-  // Keep local tableRegions synced with the pages array
+  // Keep local tableRegions synced with the current page in the pages array
   useEffect(() => {
     if (pages.length > 0 && currentPage) {
       setPages(prev => prev.map((p, idx) => 
@@ -286,6 +286,9 @@ export default function TableScanPro() {
                     imageSrc={currentPage?.originalImage || null}
                     regions={tableRegions}
                     onRegionsChange={setTableRegions}
+                    allPages={pages}
+                    currentPageIndex={currentPageIndex}
+                    onNavigateToPage={handlePageSelect}
                   />
                 </Card>
               )}
@@ -427,7 +430,7 @@ export default function TableScanPro() {
                       <Button 
                         className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground font-bold py-6 rounded-xl shadow-lg"
                         onClick={proceedToRefine}
-                        disabled={isDetecting || tableRegions.length === 0}
+                        disabled={isDetecting || pages.every(p => (p.tableRegions?.length || 0) === 0 && (p.id !== currentPage?.id || tableRegions.length === 0))}
                       >
                         Next <ChevronRight className="ml-1 w-4 h-4" />
                       </Button>
@@ -462,9 +465,9 @@ export default function TableScanPro() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-xs text-muted-foreground space-y-3">
-                <p>• <b>Step 2:</b> Draw boxes specifically around the tables. You can rename them in the left panel.</p>
-                <p>• <b>Step 3:</b> Each table you marked now has its own grid. Add vertical guides to separate columns.</p>
-                <p>• <b>Local:</b> All OCR processing stays on your device for maximum privacy.</p>
+                <p>• <b>Step 2:</b> Draw boxes around tables. The list on the left shows all tables identified across all pages.</p>
+                <p>• <b>Step 3:</b> Refine the grid lines for each table before starting the OCR process.</p>
+                <p>• <b>Local:</b> All data extraction is handled locally in your browser.</p>
               </CardContent>
             </Card>
           </div>
