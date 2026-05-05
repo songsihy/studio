@@ -74,7 +74,19 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
         width,
         height,
         verticalLines: [],
-        horizontalLines: []
+        horizontalLines: [],
+        preprocessing: {
+          binarize: true,
+          deskew: true,
+          denoise: true,
+          thresholdMethod: 'global', // Set Binary (Global) as default for manually added regions
+          thresholdValue: 128,
+          thresholdBlockSize: 31,
+          thresholdC: 2,
+          thresholdMaxValue: 255,
+          adaptiveMethod: 'gaussian',
+          thresholdType: 'binary'
+        }
       };
       onRegionsChange([...regions, newRegion]);
     }
@@ -193,10 +205,6 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
         </div>
 
         <div className="relative border rounded-xl overflow-hidden bg-white shadow-inner flex items-center justify-center min-h-[500px]">
-          {/* 
-              Crucial Fix: The containerRef is now on a div that exactly matches the image's dimensions.
-              This ensures that our percentage-based coordinates are relative ONLY to the image.
-          */}
           <div 
             ref={containerRef}
             className="relative inline-block select-none cursor-crosshair"

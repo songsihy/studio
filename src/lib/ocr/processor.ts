@@ -1,3 +1,4 @@
+
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -293,7 +294,7 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 }
 
 /**
- * Basic Canvas-based pre-processing
+ * Basic Canvas-based pre-processing fallback
  */
 function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, height: number, options?: PreprocessingOptions) {
   if (width <= 0 || height <= 0) return;
@@ -425,6 +426,9 @@ async function callAiEngine(imageUri: string, config: OcrEngineConfig): Promise<
   return data.choices?.[0]?.message?.content?.trim() || "";
 }
 
+/**
+ * Main function to process all tables on a document page.
+ */
 export async function processTablesOnPage(
   imageSrc: string, 
   regions: TableRegion[], 
@@ -434,7 +438,9 @@ export async function processTablesOnPage(
 ): Promise<ExtractedTable[]> {
   const isTesseract = engineConfig.type === 'tesseract';
   let worker: any = null;
+  
   if (isTesseract) {
+    // Correctly initialize Tesseract worker with settings-defined languages
     worker = await createWorker(language);
   }
 
@@ -467,6 +473,7 @@ export async function processTablesOnPage(
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const tempCanvas = document.createElement('canvas');
     
+    // Apply region-specific preprocessing options selected in Step 3
     if (useCv && srcMat) {
       try {
         let tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
@@ -487,7 +494,7 @@ export async function processTablesOnPage(
     }
 
     const rows: string[][] = [];
-    const cellPadding = 2;
+    const cellPadding = 2; // Bleed area to prevent cutting off text near lines
 
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
