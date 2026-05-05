@@ -84,6 +84,7 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 
 /**
  * Advanced image pre-processing for a region mat using OpenCV.
+ * Tuned for document OCR to preserve thin strokes and handle uneven lighting.
  */
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
@@ -99,7 +100,8 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 
     if (opts.denoise) {
       const blurred = new cv.Mat();
-      // Reduced blur size to preserve character detail
+      // Median blur is effective but can round character corners. 
+      // Using a small 3x3 kernel to preserve character integrity.
       cv.medianBlur(current, blurred, 3);
       current.delete();
       current = blurred;
@@ -116,7 +118,7 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
         let angle = box.angle;
         if (angle < -45) angle = angle + 90;
         
-        if (Math.abs(angle) > 0.5) {
+        if (Math.abs(angle) > 0.3) { // Lower tolerance for rotation
           const center = new cv.Point(current.cols / 2, current.rows / 2);
           const M = cv.getRotationMatrix2D(center, angle, 1.0);
           const deskewed = new cv.Mat();
@@ -132,8 +134,18 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 
     if (opts.binarize) {
       const binary = new cv.Mat();
-      // Increased block size for more robust local thresholding
-      cv.adaptiveThreshold(current, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 21, 5);
+      // Refined adaptive parameters:
+      // - Larger block size (31) handles varied illumination better on large tables
+      // - Smaller C value (2) preserves thin strokes and light-colored text
+      cv.adaptiveThreshold(
+        current, 
+        binary, 
+        255, 
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv.THRESH_BINARY, 
+        31, 
+        2
+      );
       current.delete();
       current = binary;
     }
@@ -153,15 +165,16 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
 
-  // Simple global thresholding using a more sensitive luminance weight
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
-    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     
-    // Balanced threshold to avoid over-whitening text
-    const val = luminance > 160 ? 255 : 0;
+    // Accurate luminance calculation
+    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    
+    // Using 180 as a slightly more conservative threshold to favor black text
+    const val = luminance > 180 ? 255 : 0;
     
     data[i] = val;
     data[i + 1] = val;
@@ -227,7 +240,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
         }
       }
 
-      // Fallback: Canvas crop (ensures user only sees the table image)
+      // Fallback: Canvas crop
       if (ctx) {
         ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
         if (options.binarize) {
