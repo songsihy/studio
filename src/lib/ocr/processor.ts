@@ -1,8 +1,8 @@
-
 'use client';
 
 import { createWorker } from 'tesseract.js';
 import { TableLine, TableRegion, ExtractedTable, PreprocessingOptions, OcrEngineConfig } from '@/lib/ocr-types';
+import { callAiEngineAction } from '@/app/actions/ai-ocr';
 
 declare global {
   interface Window {
@@ -65,7 +65,7 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
                 binarize: true,
                 deskew: true,
                 denoise: true,
-                thresholdMethod: 'global',
+                thresholdMethod: 'global', // Default to Binary (Global)
                 thresholdValue: 128,
                 thresholdBlockSize: 31,
                 thresholdC: 2,
@@ -116,7 +116,7 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
  * Detects grid lines within a single region using morphological operations.
  */
 export async function detectLinesInSingleRegion(imageSrc: string, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     img.onload = () => {
@@ -128,7 +128,6 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         const cv = window.cv;
         const src = cv.imread(img);
         
-        // Crop to region
         const x = Math.max(0, Math.floor((region.x / 100) * src.cols));
         const y = Math.max(0, Math.floor((region.y / 100) * src.rows));
         const w = Math.min(src.cols - x, Math.floor((region.width / 100) * src.cols));
@@ -147,29 +146,25 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-        // Detect Vertical Lines
         const vLines: TableLine[] = [];
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.floor(h / 20)));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
         cv.dilate(vMat, vMat, vKernel);
         
-        // Find vertical projections
         for (let j = 0; j < vMat.cols; j++) {
           let count = 0;
           for (let i = 0; i < vMat.rows; i++) {
             if (vMat.ucharAt(i, j) > 0) count++;
           }
-          if (count > h * 0.7) { // Found a strong vertical line
+          if (count > h * 0.7) {
             const pos = (j / vMat.cols) * 100;
-            // Debounce/Merge close lines
             if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 2) {
               vLines.push({ id: Math.random().toString(36).substr(2, 9), type: 'vertical', position: pos });
             }
           }
         }
 
-        // Detect Horizontal Lines
         const hLines: TableLine[] = [];
         const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.floor(w / 20), 1));
         const hMat = new cv.Mat();
@@ -181,7 +176,7 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
           for (let j = 0; j < hMat.cols; j++) {
             if (hMat.ucharAt(i, j) > 0) count++;
           }
-          if (count > w * 0.7) { // Found a strong horizontal line
+          if (count > w * 0.7) {
             const pos = (i / hMat.rows) * 100;
             if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 2) {
               hLines.push({ id: Math.random().toString(36).substr(2, 9), type: 'horizontal', position: pos });
@@ -390,42 +385,6 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
   });
 }
 
-async function callAiEngine(imageUri: string, config: OcrEngineConfig): Promise<string> {
-  if (config.type !== 'ai' || !config.aiConfig) throw new Error('AI Config missing');
-  const { apiUrl, apiKey, model, systemPrompt } = config.aiConfig;
-  
-  const base64Image = imageUri.split(',')[1];
-
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: systemPrompt },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-          ]
-        }
-      ],
-      max_tokens: 100
-    })
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`AI Engine error: ${err}`);
-  }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content?.trim() || "";
-}
-
 /**
  * Main function to process all tables on a document page.
  */
@@ -440,7 +399,6 @@ export async function processTablesOnPage(
   let worker: any = null;
   
   if (isTesseract) {
-    // Correctly initialize Tesseract worker with settings-defined languages
     worker = await createWorker(language);
   }
 
@@ -473,7 +431,6 @@ export async function processTablesOnPage(
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const tempCanvas = document.createElement('canvas');
     
-    // Apply region-specific preprocessing options selected in Step 3
     if (useCv && srcMat) {
       try {
         let tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
@@ -494,7 +451,7 @@ export async function processTablesOnPage(
     }
 
     const rows: string[][] = [];
-    const cellPadding = 2; // Bleed area to prevent cutting off text near lines
+    const cellPadding = 2; 
 
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
@@ -516,7 +473,14 @@ export async function processTablesOnPage(
             const result = await worker.recognize(canvas);
             text = result.data.text.trim();
           } else {
-            text = await callAiEngine(canvas.toDataURL('image/jpeg'), engineConfig);
+            // Use Server Action to proxy the AI request and bypass CORS
+            text = await callAiEngineAction(
+              canvas.toDataURL('image/jpeg'), 
+              engineConfig.aiConfig.apiUrl,
+              engineConfig.aiConfig.apiKey,
+              engineConfig.aiConfig.model,
+              engineConfig.aiConfig.systemPrompt
+            );
           }
           row.push(text);
         } else {
