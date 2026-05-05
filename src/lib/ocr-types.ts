@@ -1,6 +1,20 @@
 
 export type ProcessingStatus = 'idle' | 'uploading' | 'selecting-tables' | 'detecting' | 'refining' | 'ocr-processing' | 'completed' | 'error';
 
+export type OcrEngineType = 'tesseract' | 'ai';
+
+export interface AiEngineConfig {
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+}
+
+export interface OcrEngineConfig {
+  type: OcrEngineType;
+  aiConfig: AiEngineConfig;
+}
+
 export interface TableLine {
   id: string;
   type: 'vertical' | 'horizontal';

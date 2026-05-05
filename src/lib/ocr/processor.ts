@@ -1,6 +1,6 @@
 
 import { createWorker } from 'tesseract.js';
-import { TableLine, TableRegion, ExtractedTable, PreprocessingOptions } from '@/lib/ocr-types';
+import { TableLine, TableRegion, ExtractedTable, PreprocessingOptions, OcrEngineConfig } from '@/lib/ocr-types';
 
 declare global {
   interface Window {
@@ -85,6 +85,118 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
       }
     };
     img.onerror = () => resolve([]);
+    img.src = imageSrc;
+  });
+}
+
+/**
+ * Detects grid lines within multiple regions.
+ */
+export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[]): Promise<TableRegion[]> {
+  const updatedRegions: TableRegion[] = [];
+  for (const region of regions) {
+    try {
+      const { vLines, hLines } = await detectLinesInSingleRegion(imageSrc, region);
+      updatedRegions.push({
+        ...region,
+        verticalLines: vLines,
+        horizontalLines: hLines
+      });
+    } catch (e) {
+      console.warn("Line detection failed for region", region.id, e);
+      updatedRegions.push(region);
+    }
+  }
+  return updatedRegions;
+}
+
+/**
+ * Detects grid lines within a single region using morphological operations.
+ */
+export async function detectLinesInSingleRegion(imageSrc: string, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      try {
+        if (!window.cv || !window.cv.imread) {
+          resolve({ vLines: [], hLines: [] });
+          return;
+        }
+        const cv = window.cv;
+        const src = cv.imread(img);
+        
+        // Crop to region
+        const x = Math.max(0, Math.floor((region.x / 100) * src.cols));
+        const y = Math.max(0, Math.floor((region.y / 100) * src.rows));
+        const w = Math.min(src.cols - x, Math.floor((region.width / 100) * src.cols));
+        const h = Math.min(src.rows - y, Math.floor((region.height / 100) * src.rows));
+        
+        if (w <= 0 || h <= 0) {
+          src.delete();
+          resolve({ vLines: [], hLines: [] });
+          return;
+        }
+
+        const roi = src.roi(new cv.Rect(x, y, w, h));
+        const gray = new cv.Mat();
+        cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
+        
+        const thresh = new cv.Mat();
+        cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+
+        // Detect Vertical Lines
+        const vLines: TableLine[] = [];
+        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.floor(h / 20)));
+        const vMat = new cv.Mat();
+        cv.erode(thresh, vMat, vKernel);
+        cv.dilate(vMat, vMat, vKernel);
+        
+        // Find vertical projections
+        for (let j = 0; j < vMat.cols; j++) {
+          let count = 0;
+          for (let i = 0; i < vMat.rows; i++) {
+            if (vMat.ucharAt(i, j) > 0) count++;
+          }
+          if (count > h * 0.7) { // Found a strong vertical line
+            const pos = (j / vMat.cols) * 100;
+            // Debounce/Merge close lines
+            if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 2) {
+              vLines.push({ id: Math.random().toString(36).substr(2, 9), type: 'vertical', position: pos });
+            }
+          }
+        }
+
+        // Detect Horizontal Lines
+        const hLines: TableLine[] = [];
+        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.floor(w / 20), 1));
+        const hMat = new cv.Mat();
+        cv.erode(thresh, hMat, hKernel);
+        cv.dilate(hMat, hMat, hKernel);
+
+        for (let i = 0; i < hMat.rows; i++) {
+          let count = 0;
+          for (let j = 0; j < hMat.cols; j++) {
+            if (hMat.ucharAt(i, j) > 0) count++;
+          }
+          if (count > w * 0.7) { // Found a strong horizontal line
+            const pos = (i / hMat.rows) * 100;
+            if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 2) {
+              hLines.push({ id: Math.random().toString(36).substr(2, 9), type: 'horizontal', position: pos });
+            }
+          }
+        }
+
+        src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
+        vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
+
+        resolve({ vLines, hLines });
+      } catch (err) {
+        console.error("Line detection error:", err);
+        resolve({ vLines: [], hLines: [] });
+      }
+    };
+    img.onerror = () => resolve({ vLines: [], hLines: [] });
     img.src = imageSrc;
   });
 }
@@ -180,7 +292,7 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
 }
 
 /**
- * Basic Canvas-based pre-processing (Grayscale + Balanced Thresholding)
+ * Basic Canvas-based pre-processing
  */
 function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, height: number, options?: PreprocessingOptions) {
   if (width <= 0 || height <= 0) return;
@@ -201,7 +313,6 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
     if (method === 'global') {
       val = luminance > threshVal ? 255 : 0;
     } else {
-      // Very simple adaptive-ish fallback for canvas
       val = luminance > 160 ? 255 : 0; 
     }
     
@@ -277,136 +388,55 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
   });
 }
 
-async function detectLinesForRoi(cv: any, binary: any, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
-  let x = Math.floor((region.x / 100) * binary.cols);
-  let y = Math.floor((region.y / 100) * binary.rows);
-  let w = Math.floor((region.width / 100) * binary.cols);
-  let h = Math.floor((region.height / 100) * binary.rows);
+async function callAiEngine(imageUri: string, config: OcrEngineConfig): Promise<string> {
+  if (config.type !== 'ai' || !config.aiConfig) throw new Error('AI Config missing');
+  const { apiUrl, apiKey, model, systemPrompt } = config.aiConfig;
+  
+  const base64Image = imageUri.split(',')[1];
 
-  x = Math.max(0, x); y = Math.max(0, y);
-  w = Math.min(binary.cols - x, w);
-  h = Math.min(binary.rows - y, h);
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: systemPrompt },
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+          ]
+        }
+      ],
+      max_tokens: 100
+    })
+  });
 
-  const vPositions: number[] = [];
-  const hPositions: number[] = [];
-
-  if (w > 0 && h > 0) {
-    const rect = new cv.Rect(x, y, w, h);
-    const roi = binary.roi(rect);
-    const horizontalSize = Math.max(2, Math.floor(w / 30));
-    const horizontalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(horizontalSize, 1));
-    const verticalSize = Math.max(2, Math.floor(h / 30));
-    const verticalStructure = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, verticalSize));
-
-    const horizontal = new cv.Mat();
-    cv.erode(roi, horizontal, horizontalStructure);
-    cv.dilate(horizontal, horizontal, horizontalStructure);
-
-    const vertical = new cv.Mat();
-    cv.erode(roi, vertical, verticalStructure);
-    cv.dilate(vertical, vertical, verticalStructure);
-
-    for (let j = 0; j < vertical.cols; j++) {
-      let count = 0;
-      for (let i = 0; i < vertical.rows; i++) {
-        if (vertical.ucharAt(i, j) > 128) count++;
-      }
-      if (count > vertical.rows * 0.5) vPositions.push((j / w) * 100);
-    }
-
-    for (let i = 0; i < horizontal.rows; i++) {
-      let count = 0;
-      for (let j = 0; j < horizontal.cols; j++) {
-        if (horizontal.ucharAt(i, j) > 128) count++;
-      }
-      if (count > horizontal.cols * 0.5) hPositions.push((i / h) * 100);
-    }
-
-    horizontal.delete(); vertical.delete(); roi.delete();
-    horizontalStructure.delete(); verticalStructure.delete();
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`AI Engine error: ${err}`);
   }
 
-  const filter = (lines: number[]) => {
-    const unique = Array.from(new Set(lines)).sort((a, b) => a - b);
-    return unique.filter((pos, idx) => idx === 0 || Math.abs(pos - unique[idx - 1]) > 2);
-  };
-
-  return {
-    vLines: filter(vPositions).map((p, i) => ({ id: `v-${i}-${Date.now()}`, type: 'vertical', position: p })),
-    hLines: filter(hPositions).map((p, i) => ({ id: `h-${i}-${Date.now()}`, type: 'horizontal', position: p }))
-  };
-}
-
-export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[]): Promise<TableRegion[]> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'Anonymous';
-    img.onload = async () => {
-      try {
-        if (!window.cv || !window.cv.imread) {
-          resolve(regions);
-          return;
-        }
-        const cv = window.cv;
-        const src = cv.imread(img);
-        const gray = new cv.Mat();
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-        const binary = new cv.Mat();
-        cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 11, 2);
-
-        const updatedRegions = [];
-        for (const region of regions) {
-          const { vLines, hLines } = await detectLinesForRoi(cv, binary, region);
-          updatedRegions.push({ ...region, verticalLines: vLines, horizontalLines: hLines });
-        }
-
-        src.delete(); gray.delete(); binary.delete();
-        resolve(updatedRegions);
-      } catch (err) {
-        console.error("Line detection error:", err);
-        resolve(regions);
-      }
-    };
-    img.onerror = () => resolve(regions);
-    img.src = imageSrc;
-  });
-}
-
-export async function detectLinesInSingleRegion(imageSrc: string, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'Anonymous';
-    img.onload = async () => {
-      try {
-        if (!window.cv || !window.cv.imread) {
-          resolve({ vLines: region.verticalLines || [], hLines: region.horizontalLines || [] });
-          return;
-        }
-        const cv = window.cv;
-        const src = cv.imread(img);
-        const gray = new cv.Mat();
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-        const binary = new cv.Mat();
-        cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 11, 2);
-        const lines = await detectLinesForRoi(cv, binary, region);
-        src.delete(); gray.delete(); binary.delete();
-        resolve(lines);
-      } catch (err) {
-        resolve({ vLines: region.verticalLines || [], hLines: region.horizontalLines || [] });
-      }
-    };
-    img.onerror = () => resolve({ vLines: region.verticalLines || [], hLines: region.horizontalLines || [] });
-    img.src = imageSrc;
-  });
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content?.trim() || "";
 }
 
 export async function processTablesOnPage(
   imageSrc: string, 
   regions: TableRegion[], 
   language: string,
+  engineConfig: OcrEngineConfig,
   onProgress?: (progress: number) => void
 ): Promise<ExtractedTable[]> {
-  const worker = await createWorker(language);
+  const isTesseract = engineConfig.type === 'tesseract';
+  let worker: any = null;
+  if (isTesseract) {
+    worker = await createWorker(language);
+  }
+
   const img = new Image();
   img.src = imageSrc;
   await new Promise(resolve => img.onload = resolve);
@@ -436,7 +466,6 @@ export async function processTablesOnPage(
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const tempCanvas = document.createElement('canvas');
     
-    // Apply user-configured preprocessing to the table region
     if (useCv && srcMat) {
       try {
         let tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
@@ -445,11 +474,8 @@ export async function processTablesOnPage(
         let tableH = Math.min(srcMat.rows - tableY, Math.floor((region.height / 100) * srcMat.rows));
         const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
         const regionMat = srcMat.roi(regionRect);
-        
-        // Pass user configuration explicitly
         const processedRegionMat = preprocessMatForOcr(cv, regionMat, region.preprocessing);
         cv.imshow(tempCanvas, processedRegionMat);
-        
         regionMat.delete();
         processedRegionMat.delete();
       } catch (e) {
@@ -460,7 +486,7 @@ export async function processTablesOnPage(
     }
 
     const rows: string[][] = [];
-    const cellPadding = 2; // Bleed factor for better context
+    const cellPadding = 2;
 
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
@@ -476,8 +502,15 @@ export async function processTablesOnPage(
         if (w > 1 && h > 1) {
           canvas.width = w; canvas.height = h;
           ctx.drawImage(tempCanvas, x, y, w, h, 0, 0, w, h);
-          const { data: { text } } = await worker.recognize(canvas);
-          row.push(text.trim());
+          
+          let text = "";
+          if (isTesseract) {
+            const result = await worker.recognize(canvas);
+            text = result.data.text.trim();
+          } else {
+            text = await callAiEngine(canvas.toDataURL('image/jpeg'), engineConfig);
+          }
+          row.push(text);
         } else {
           row.push("");
         }
@@ -490,7 +523,7 @@ export async function processTablesOnPage(
   }
 
   if (srcMat) srcMat.delete();
-  await worker.terminate();
+  if (worker) await worker.terminate();
   return allResults;
 }
 
