@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -53,7 +52,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     binarize: true, 
     deskew: true, 
     denoise: true,
-    thresholdMethod: 'adaptive',
+    thresholdMethod: 'global',
     thresholdValue: 128,
     thresholdBlockSize: 31,
     thresholdC: 2,

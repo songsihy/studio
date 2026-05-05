@@ -1,3 +1,4 @@
+'use client';
 
 import { createWorker } from 'tesseract.js';
 import { TableLine, TableRegion, ExtractedTable, PreprocessingOptions, OcrEngineConfig } from '@/lib/ocr-types';
@@ -63,7 +64,7 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
                 binarize: true,
                 deskew: true,
                 denoise: true,
-                thresholdMethod: 'adaptive',
+                thresholdMethod: 'global',
                 thresholdValue: 128,
                 thresholdBlockSize: 31,
                 thresholdC: 2,
@@ -210,7 +211,7 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       binarize: true, 
       deskew: true, 
       denoise: true,
-      thresholdMethod: 'adaptive',
+      thresholdMethod: 'global',
       thresholdValue: 128,
       thresholdBlockSize: 31,
       thresholdC: 2,
@@ -299,7 +300,7 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
   
-  const method = options?.thresholdMethod || 'adaptive';
+  const method = options?.thresholdMethod || 'global';
   const threshVal = options?.thresholdValue || 128;
   const inv = options?.thresholdType === 'binary_inv';
 
