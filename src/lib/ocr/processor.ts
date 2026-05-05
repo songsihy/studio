@@ -155,7 +155,6 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       if (opts.thresholdMethod === 'global') {
         cv.threshold(current, binary, opts.thresholdValue, maxValue, thresholdType);
       } else {
-        // Use user-defined block size (must be odd)
         const blockSize = Math.max(3, opts.thresholdBlockSize % 2 === 0 ? opts.thresholdBlockSize + 1 : opts.thresholdBlockSize);
         const adaptiveMethod = opts.adaptiveMethod === 'mean' ? cv.ADAPTIVE_THRESH_MEAN_C : cv.ADAPTIVE_THRESH_GAUSSIAN_C;
 
@@ -188,10 +187,8 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
   
-  // Simple global thresholding logic for Canvas fallback
   const method = options?.thresholdMethod || 'adaptive';
   const threshVal = options?.thresholdValue || 128;
-  const C = options?.thresholdC !== undefined ? options.thresholdC * 5 : 10;
   const inv = options?.thresholdType === 'binary_inv';
 
   for (let i = 0; i < data.length; i += 4) {
@@ -200,8 +197,13 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
     const b = data[i + 2];
     const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
     
-    let target = method === 'global' ? threshVal : (180 - C);
-    let val = luminance > target ? 255 : 0;
+    let val;
+    if (method === 'global') {
+      val = luminance > threshVal ? 255 : 0;
+    } else {
+      // Very simple adaptive-ish fallback for canvas
+      val = luminance > 160 ? 255 : 0; 
+    }
     
     if (inv) val = 255 - val;
     data[i] = data[i + 1] = data[i + 2] = val;
@@ -434,6 +436,7 @@ export async function processTablesOnPage(
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const tempCanvas = document.createElement('canvas');
     
+    // Apply user-configured preprocessing to the table region
     if (useCv && srcMat) {
       try {
         let tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
@@ -442,8 +445,11 @@ export async function processTablesOnPage(
         let tableH = Math.min(srcMat.rows - tableY, Math.floor((region.height / 100) * srcMat.rows));
         const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
         const regionMat = srcMat.roi(regionRect);
+        
+        // Pass user configuration explicitly
         const processedRegionMat = preprocessMatForOcr(cv, regionMat, region.preprocessing);
         cv.imshow(tempCanvas, processedRegionMat);
+        
         regionMat.delete();
         processedRegionMat.delete();
       } catch (e) {
@@ -454,7 +460,7 @@ export async function processTablesOnPage(
     }
 
     const rows: string[][] = [];
-    const cellPadding = 2;
+    const cellPadding = 2; // Bleed factor for better context
 
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
@@ -463,6 +469,7 @@ export async function processTablesOnPage(
         let y = (hCoords[i] / 100) * tempCanvas.height - cellPadding;
         let w = ((vCoords[j + 1] - vCoords[j]) / 100) * tempCanvas.width + (cellPadding * 2);
         let h = ((hCoords[i + 1] - hCoords[i]) / 100) * tempCanvas.height + (cellPadding * 2);
+        
         x = Math.max(0, x); y = Math.max(0, y);
         w = Math.min(tempCanvas.width - x, w); h = Math.min(tempCanvas.height - y, h);
 
