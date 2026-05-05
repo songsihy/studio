@@ -4,7 +4,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, MousePointer2 } from 'lucide-react';
+import { Plus, X, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -33,6 +33,17 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState<{ id: string; type: 'v' | 'h' } | null>(null);
   const [addMode, setAddMode] = useState<'v' | 'h' | null>(null);
+  const [imgNaturalSize, setImgNaturalSize] = useState<{ w: number, h: number } | null>(null);
+
+  useEffect(() => {
+    if (imageSrc) {
+      const img = new Image();
+      img.onload = () => {
+        setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+      };
+      img.src = imageSrc;
+    }
+  }, [imageSrc]);
 
   const addLine = (type: 'vertical' | 'horizontal', position: number) => {
     const newLine: TableLine = {
@@ -107,7 +118,11 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     setActiveLine(null);
   };
 
-  if (!imageSrc) return null;
+  if (!imageSrc || !imgNaturalSize) return null;
+
+  // Calculate correct aspect ratio of the crop
+  // aspectRatio = (width% * naturalWidth) / (height% * naturalHeight)
+  const cropAspect = (cropRect.width * imgNaturalSize.w) / (cropRect.height * imgNaturalSize.h);
 
   return (
     <div className="space-y-4 border rounded-xl p-4 bg-muted/10 shadow-sm">
@@ -155,7 +170,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
       <div 
         ref={containerRef}
         className={cn(
-          "relative border rounded-lg overflow-hidden bg-white select-none cursor-crosshair group shadow-inner",
+          "relative border rounded-lg overflow-hidden bg-white select-none cursor-crosshair group shadow-inner mx-auto",
           addMode && "ring-2 ring-primary/20"
         )}
         onClick={handleContainerClick}
@@ -164,9 +179,9 @@ export const LineEditor: React.FC<LineEditorProps> = ({
         onMouseLeave={handleMouseUp}
         style={{ 
           width: '100%',
-          aspectRatio: `${cropRect.width} / ${cropRect.height}`,
-          maxHeight: '600px',
-          minHeight: '200px'
+          maxWidth: '100%',
+          aspectRatio: `${cropAspect}`,
+          maxHeight: '70vh',
         }}
       >
         <img 
