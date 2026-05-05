@@ -75,6 +75,68 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 }
 
 /**
+ * Advanced image pre-processing for a region mat.
+ * Includes: Denoising, Deskewing, Binarization, and Thinning.
+ */
+function preprocessMatForOcr(cv: any, src: any): any {
+  // 1. Grayscale (if not already)
+  const gray = new cv.Mat();
+  if (src.channels() > 1) {
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+  } else {
+    src.copyTo(gray);
+  }
+
+  // 2. Noise Removal (Median Blur)
+  const denoised = new cv.Mat();
+  cv.medianBlur(gray, denoised, 3);
+
+  // 3. Deskewing (Skew Correction)
+  const threshForSkew = new cv.Mat();
+  cv.threshold(denoised, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+  
+  const points = new cv.Mat();
+  cv.findNonZero(threshForSkew, points);
+  
+  let deskewed = new cv.Mat();
+  if (!points.empty()) {
+    const box = cv.minAreaRect(points);
+    let angle = box.angle;
+    
+    // Adjust angle for minAreaRect output behavior
+    if (angle < -45) {
+      angle = angle + 90;
+    }
+    
+    // Only deskew if skew is significant (> 0.5 degrees)
+    if (Math.abs(angle) > 0.5) {
+      const center = new cv.Point(denoised.cols / 2, denoised.rows / 2);
+      const M = cv.getRotationMatrix2D(center, angle, 1.0);
+      cv.warpAffine(denoised, deskewed, M, new cv.Size(denoised.cols, denoised.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+      M.delete();
+    } else {
+      denoised.copyTo(deskewed);
+    }
+  } else {
+    denoised.copyTo(deskewed);
+  }
+
+  // 4. Binarization (Adaptive Thresholding)
+  const binary = new cv.Mat();
+  cv.adaptiveThreshold(deskewed, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+
+  // 5. Thinning/Skeletonization (Morphology)
+  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 1));
+  const processed = new cv.Mat();
+  cv.morphologyEx(binary, processed, cv.MORPH_CLOSE, kernel);
+
+  // Cleanup intermediate mats
+  gray.delete(); denoised.delete(); threshForSkew.delete(); points.delete(); deskewed.delete(); binary.delete(); kernel.delete();
+
+  return processed;
+}
+
+/**
  * Core logic to detect lines in a single ROI
  */
 async function detectLinesForRoi(cv: any, binary: any, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
@@ -207,7 +269,7 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
 }
 
 /**
- * Process all tables on a page using Tesseract.js
+ * Process all tables on a page using Tesseract.js with OpenCV preprocessing
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -220,6 +282,9 @@ export async function processTablesOnPage(
   const img = new Image();
   img.src = imageSrc;
   await new Promise(resolve => img.onload = resolve);
+
+  const cv = window.cv;
+  const srcMat = cv.imread(img);
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -238,25 +303,43 @@ export async function processTablesOnPage(
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
 
-    const tableX = (region.x / 100) * img.width;
-    const tableY = (region.y / 100) * img.height;
-    const tableW = (region.width / 100) * img.width;
-    const tableH = (region.height / 100) * img.height;
+    // 1. Extract and PREPROCESS the whole region Mat for better OCR
+    let tableX = Math.floor((region.x / 100) * srcMat.cols);
+    let tableY = Math.floor((region.y / 100) * srcMat.rows);
+    let tableW = Math.floor((region.width / 100) * srcMat.cols);
+    let tableH = Math.floor((region.height / 100) * srcMat.rows);
+
+    // Bounds safety
+    tableX = Math.max(0, tableX);
+    tableY = Math.max(0, tableY);
+    tableW = Math.min(srcMat.cols - tableX, tableW);
+    tableH = Math.min(srcMat.rows - tableY, tableH);
+
+    const regionRect = new cv.Rect(tableX, tableY, tableW, tableH);
+    const regionMat = srcMat.roi(regionRect);
+    
+    // Apply preprocessing (Binarization, Deskew, Noise Removal)
+    const processedRegionMat = preprocessMatForOcr(cv, regionMat);
+    
+    // We use a temporary canvas to slice the processed region into cells
+    const tempCanvas = document.createElement('canvas');
+    cv.imshow(tempCanvas, processedRegionMat);
 
     const rows: string[][] = [];
 
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
       for (let j = 0; j < vCoords.length - 1; j++) {
-        const x = tableX + (vCoords[j] / 100) * tableW;
-        const y = tableY + (hCoords[i] / 100) * tableH;
-        const w = ((vCoords[j + 1] - vCoords[j]) / 100) * tableW;
-        const h = ((hCoords[i + 1] - hCoords[i]) / 100) * tableH;
+        const x = (vCoords[j] / 100) * tempCanvas.width;
+        const y = (hCoords[i] / 100) * tempCanvas.height;
+        const w = ((vCoords[j + 1] - vCoords[j]) / 100) * tempCanvas.width;
+        const h = ((hCoords[i + 1] - hCoords[i]) / 100) * tempCanvas.height;
 
         if (w > 0 && h > 0) {
           canvas.width = w;
           canvas.height = h;
-          ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+          // Draw from the PROCESSED temporary canvas
+          ctx.drawImage(tempCanvas, x, y, w, h, 0, 0, w, h);
           const { data: { text } } = await worker.recognize(canvas);
           row.push(text.trim());
         } else {
@@ -275,8 +358,12 @@ export async function processTablesOnPage(
       headers: rows[0] || [],
       rows: rows
     });
+
+    regionMat.delete();
+    processedRegionMat.delete();
   }
 
+  srcMat.delete();
   await worker.terminate();
   return allResults;
 }
