@@ -141,19 +141,16 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
   const data = imageData.data;
 
   for (let i = 0; i < data.length; i += 4) {
-    // Grayscale: Luma method
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
     const gray = 0.299 * r + 0.587 * g + 0.114 * b;
     
-    // Binarization (simple fixed threshold fallback)
     const val = gray > 140 ? 255 : 0;
     
     data[i] = val;
     data[i + 1] = val;
     data[i + 2] = val;
-    // data[i+3] remains alpha
   }
   ctx.putImageData(imageData, 0, 0);
 }
@@ -349,18 +346,26 @@ export async function processTablesOnPage(
         fallbackToCanvas(img, region, tempCanvas, true);
       }
     } else {
-      // Use Canvas fallback with its own preprocessing (Grayscale + Thresholding)
       fallbackToCanvas(img, region, tempCanvas, true);
     }
 
     const rows: string[][] = [];
+    const cellPadding = 2; // Pixel bleed to ensure characters aren't cut off
+
     for (let i = 0; i < hCoords.length - 1; i++) {
       const row: string[] = [];
       for (let j = 0; j < vCoords.length - 1; j++) {
-        const x = (vCoords[j] / 100) * tempCanvas.width;
-        const y = (hCoords[i] / 100) * tempCanvas.height;
-        const w = ((vCoords[j + 1] - vCoords[j]) / 100) * tempCanvas.width;
-        const h = ((hCoords[i + 1] - hCoords[i]) / 100) * tempCanvas.height;
+        // Calculate crop with padding
+        let x = (vCoords[j] / 100) * tempCanvas.width - cellPadding;
+        let y = (hCoords[i] / 100) * tempCanvas.height - cellPadding;
+        let w = ((vCoords[j + 1] - vCoords[j]) / 100) * tempCanvas.width + (cellPadding * 2);
+        let h = ((hCoords[i + 1] - hCoords[i]) / 100) * tempCanvas.height + (cellPadding * 2);
+
+        // Clamp to source boundaries
+        x = Math.max(0, x);
+        y = Math.max(0, y);
+        w = Math.min(tempCanvas.width - x, w);
+        h = Math.min(tempCanvas.height - y, h);
 
         if (w > 1 && h > 1) {
           canvas.width = w;
