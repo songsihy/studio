@@ -481,7 +481,6 @@ export async function processTablesOnPage(
                 const imageUri = canvas.toDataURL('image/jpeg');
                 const base64Image = imageUri.split(',')[1];
                 
-                // Ensure URL has protocol for local fetch
                 let targetUrl = apiUrl;
                 if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
                   targetUrl = 'http://' + targetUrl;
@@ -518,13 +517,12 @@ export async function processTablesOnPage(
               } catch (err) {
                 console.error("Local AI Fetch error:", err);
                 if (err instanceof TypeError && err.message.includes('fetch')) {
-                  text = "[Connection Error: Check if local AI server is running and CORS is enabled]";
+                  text = "[CORS ERROR: Your local AI server is blocking this request. Start your server with CORS enabled (e.g., OLLAMA_ORIGINS=\"*\" or --cors for llama.cpp)]";
                 } else {
                   text = `[ERROR: ${err instanceof Error ? err.message : String(err)}]`;
                 }
               }
             } else {
-              // Use Server Action to proxy the AI request and bypass CORS for cloud APIs
               try {
                 text = await callAiEngineAction(
                   canvas.toDataURL('image/jpeg'), 
