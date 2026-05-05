@@ -162,14 +162,22 @@ export const LineEditor: React.FC<LineEditorProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        style={{ height: '300px' }}
+        style={{ 
+          width: '100%',
+          aspectRatio: `${cropRect.width} / ${cropRect.height}`,
+          maxHeight: '600px',
+          minHeight: '200px'
+        }}
       >
-        <div 
-          className="absolute inset-0 bg-no-repeat pointer-events-none"
+        <img 
+          src={imageSrc} 
+          alt="Table crop"
+          className="absolute max-w-none pointer-events-none"
           style={{
-            backgroundImage: `url(${imageSrc})`,
-            backgroundSize: `${10000 / cropRect.width}% ${10000 / cropRect.height}%`,
-            backgroundPosition: `${(cropRect.x / (100 - cropRect.width)) * 100}% ${(cropRect.y / (100 - cropRect.height)) * 100}%`
+            width: `${10000 / cropRect.width}%`,
+            height: `${10000 / cropRect.height}%`,
+            left: `${- (cropRect.x / cropRect.width) * 100}%`,
+            top: `${- (cropRect.y / cropRect.height) * 100}%`,
           }}
         />
 
