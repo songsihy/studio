@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { detectLinesInSingleRegion, getPreprocessedPreview } from '@/lib/ocr/processor';
 import { useToast } from '@/hooks/use-toast';
 
@@ -53,7 +54,10 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     deskew: true, 
     denoise: true,
     thresholdBlockSize: 31,
-    thresholdC: 2
+    thresholdC: 2,
+    thresholdMaxValue: 255,
+    adaptiveMethod: 'gaussian',
+    thresholdType: 'binary'
   };
 
   useEffect(() => {
@@ -190,7 +194,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     onPreprocessingChange(newOpts);
   };
 
-  const updateThresholdOption = (key: 'thresholdBlockSize' | 'thresholdC', val: number) => {
+  const updateOption = <K extends keyof PreprocessingOptions>(key: K, val: PreprocessingOptions[K]) => {
     if (!onPreprocessingChange) return;
     const newOpts = { ...preprocessing, [key]: val };
     onPreprocessingChange(newOpts);
@@ -241,33 +245,76 @@ export const LineEditor: React.FC<LineEditorProps> = ({
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-64 p-4 space-y-4">
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <Label className="text-[10px] font-bold">Block Size</Label>
-                        <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdBlockSize}px</span>
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-bold uppercase tracking-wider border-b pb-2">Adaptive Threshold</h4>
+                      
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <Label className="text-[10px] font-bold">Max Value</Label>
+                          <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdMaxValue}</span>
+                        </div>
+                        <Slider 
+                          min={0} 
+                          max={255} 
+                          step={1} 
+                          value={[preprocessing.thresholdMaxValue]} 
+                          onValueChange={(v) => updateOption('thresholdMaxValue', v[0])}
+                        />
                       </div>
-                      <Slider 
-                        min={3} 
-                        max={99} 
-                        step={2} 
-                        value={[preprocessing.thresholdBlockSize]} 
-                        onValueChange={(v) => updateThresholdOption('thresholdBlockSize', v[0])}
-                      />
-                      <p className="text-[9px] text-muted-foreground">Local neighborhood area for threshold calculation.</p>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <Label className="text-[10px] font-bold">Constant (C)</Label>
-                        <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdC}</span>
+
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-bold">Method</Label>
+                        <Select value={preprocessing.adaptiveMethod} onValueChange={(v: any) => updateOption('adaptiveMethod', v)}>
+                          <SelectTrigger className="h-8 text-[10px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="mean" className="text-[10px]">Mean C</SelectItem>
+                            <SelectItem value="gaussian" className="text-[10px]">Gaussian C</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
-                      <Slider 
-                        min={0} 
-                        max={20} 
-                        step={1} 
-                        value={[preprocessing.thresholdC]} 
-                        onValueChange={(v) => updateThresholdOption('thresholdC', v[0])}
-                      />
-                      <p className="text-[9px] text-muted-foreground">Value subtracted from the weighted mean.</p>
+
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-bold">Type</Label>
+                        <Select value={preprocessing.thresholdType} onValueChange={(v: any) => updateOption('thresholdType', v)}>
+                          <SelectTrigger className="h-8 text-[10px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="binary" className="text-[10px]">Binary</SelectItem>
+                            <SelectItem value="binary_inv" className="text-[10px]">Binary Inverse</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <Label className="text-[10px] font-bold">Block Size</Label>
+                          <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdBlockSize}px</span>
+                        </div>
+                        <Slider 
+                          min={3} 
+                          max={99} 
+                          step={2} 
+                          value={[preprocessing.thresholdBlockSize]} 
+                          onValueChange={(v) => updateOption('thresholdBlockSize', v[0])}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <Label className="text-[10px] font-bold">Constant (C)</Label>
+                          <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdC}</span>
+                        </div>
+                        <Slider 
+                          min={0} 
+                          max={20} 
+                          step={1} 
+                          value={[preprocessing.thresholdC]} 
+                          onValueChange={(v) => updateOption('thresholdC', v[0])}
+                        />
+                      </div>
                     </div>
                   </PopoverContent>
                 </Popover>

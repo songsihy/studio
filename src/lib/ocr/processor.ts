@@ -64,7 +64,10 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
                 deskew: true,
                 denoise: true,
                 thresholdBlockSize: 31,
-                thresholdC: 2
+                thresholdC: 2,
+                thresholdMaxValue: 255,
+                adaptiveMethod: 'gaussian',
+                thresholdType: 'binary'
               }
             });
           }
@@ -94,7 +97,10 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       deskew: true, 
       denoise: true,
       thresholdBlockSize: 31,
-      thresholdC: 2
+      thresholdC: 2,
+      thresholdMaxValue: 255,
+      adaptiveMethod: 'gaussian',
+      thresholdType: 'binary'
     };
     let current = src.clone();
     
@@ -141,12 +147,17 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       const binary = new cv.Mat();
       // Use user-defined block size (must be odd)
       const blockSize = Math.max(3, opts.thresholdBlockSize % 2 === 0 ? opts.thresholdBlockSize + 1 : opts.thresholdBlockSize);
+      
+      const adaptiveMethod = opts.adaptiveMethod === 'mean' ? cv.ADAPTIVE_THRESH_MEAN_C : cv.ADAPTIVE_THRESH_GAUSSIAN_C;
+      const thresholdType = opts.thresholdType === 'binary_inv' ? cv.THRESH_BINARY_INV : cv.THRESH_BINARY;
+      const maxValue = opts.thresholdMaxValue || 255;
+
       cv.adaptiveThreshold(
         current, 
         binary, 
-        255, 
-        cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv.THRESH_BINARY, 
+        maxValue, 
+        adaptiveMethod, 
+        thresholdType, 
         blockSize, 
         opts.thresholdC
       );
@@ -171,13 +182,15 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
   
   // Simple global thresholding logic for Canvas fallback
   const C = options?.thresholdC !== undefined ? options.thresholdC * 5 : 10;
+  const inv = options?.thresholdType === 'binary_inv';
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
     const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-    const val = luminance > (180 - C) ? 255 : 0;
+    let val = luminance > (180 - C) ? 255 : 0;
+    if (inv) val = 255 - val;
     data[i] = data[i + 1] = data[i + 2] = val;
   }
   ctx.putImageData(imageData, 0, 0);

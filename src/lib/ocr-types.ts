@@ -13,6 +13,9 @@ export interface PreprocessingOptions {
   denoise: boolean;
   thresholdBlockSize: number;
   thresholdC: number;
+  thresholdMaxValue: number;
+  adaptiveMethod: 'mean' | 'gaussian';
+  thresholdType: 'binary' | 'binary_inv';
 }
 
 export interface TableRegion {
