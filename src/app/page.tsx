@@ -7,19 +7,19 @@ import {
   Download, 
   Settings, 
   Languages, 
-  ChevronRight,
-  ChevronLeft,
-  RotateCcw,
-  CheckCircle2,
-  AlertCircle,
-  Loader2,
-  ScanSearch,
-  Sparkles,
-  Files,
-  Grid3X3,
-  Check,
-  Info,
-  Wand2
+  ChevronRight, 
+  ChevronLeft, 
+  RotateCcw, 
+  CheckCircle2, 
+  AlertCircle, 
+  Loader2, 
+  ScanSearch, 
+  Sparkles, 
+  Files, 
+  Grid3X3, 
+  Check, 
+  Info, 
+  Wand2 
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,9 +29,9 @@ import { TableSelector } from '@/components/ocr/TableSelector';
 import { 
   ProcessingStatus, 
   DocumentPage, 
-  ExtractedTable,
-  TableRegion,
-  TableLine
+  ExtractedTable, 
+  TableRegion, 
+  TableLine 
 } from '@/lib/ocr-types';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -71,7 +71,7 @@ export default function TableScanPro() {
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [pages, setPages] = useState<DocumentPage[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [selectedLangs, setSelectedLangs] = useState<string[]>(['eng']);
+  const [selectedLangs, setSelectedLangs] = useState<string[]>(['eng', 'chi_tra', 'chi_sim']);
   const [tableRegions, setTableRegions] = useState<TableRegion[]>([]);
   const [progress, setProgress] = useState(0);
   const [allExtractedData, setAllExtractedData] = useState<ExtractedTable[]>([]);
@@ -146,7 +146,6 @@ export default function TableScanPro() {
     if (targetPage) {
       setCurrentPageIndex(index);
       setTableRegions(targetPage.tableRegions || []);
-      // Optional: Auto-detect if page has no regions yet
       if (status === 'selecting-tables' && (targetPage.tableRegions?.length || 0) === 0) {
         autoDetectRegions(targetPage.originalImage);
       }
