@@ -1,18 +1,68 @@
-# **App Name**: TableScan Pro
+# TableScan Pro - Technical Blueprint
 
-## Core Features:
+## 1. Overview
+TableScan Pro is a professional-grade document OCR tool specializing in complex table extraction. It combines classic computer vision (OpenCV.js) with modern OCR engines (Tesseract.js) and Generative AI (Vision LLMs) to handle both wired and wireless table structures.
 
-- Intelligent Document Upload: Allow users to upload single/multiple image files or PDF documents via file selection or intuitive drag-and-drop functionality, automatically detecting input type.
-- PDF Page Pre-processing: Utilize pdf.js to render PDF pages as images, enabling users to select specific pages for OCR processing and table detection.
-- Advanced Table Detection: Leverage OpenCV.js to detect table structures within images, handling both wired and wireless lines, and identifying multiple tables on a single page.
-- Interactive Line Guiding & Adjustment: Provide a user interface for manual guidance and refinement of wireless table lines, with system suggestions based on font width and height analysis to improve accuracy.
-- Multi-Language OCR Engine: Process the adjusted table regions using Tesseract.js, supporting English, Traditional Chinese, and Simplified Chinese character recognition to extract cell content.
-- Structured Data Output Generation: Convert the OCR-processed table data into a structured format, enabling seamless export to HTML, CSV, JSON, and Markdown formats.
+## 2. Technical Stack
+- **Framework**: Next.js 15 (App Router)
+- **UI Components**: Radix UI + ShadCN + Tailwind CSS
+- **Computer Vision**: OpenCV.js (WebAssembly)
+- **OCR (Local)**: Tesseract.js
+- **OCR (AI)**: OpenAI-compatible Vision API (GPT-4o, llama.cpp, Ollama)
+- **PDF Processing**: PDF.js
 
-## Style Guidelines:
+## 3. Core Logic Flow
 
-- Light color scheme, evoking a sense of clarity and professionalism. Primary actions are highlighted with a composed, clear blue (#267BC6), reflecting precision in data extraction. The background is a very light, almost imperceptible blue-grey (#F2F5F8) to maintain visual cleanliness. An energetic turquoise accent color (#22E1CC) is used sparingly for interactive elements and highlights, adding a modern touch.
-- Body and headline font: 'Inter' (sans-serif) for its modern, legible, and objective aesthetic, ensuring clear readability across diverse data sets and UI elements.
-- Clean, line-based or glyph-style icons that visually represent functions like upload, table, export, and language selection, contributing to an intuitive user experience.
-- A structured and organized multi-panel layout, facilitating a clear workflow from input upload and preview to table adjustment and output export, ensuring ample whitespace for content clarity.
-- Subtle, fluid animations provide immediate feedback for user interactions such as drag-and-drop actions, loading states during OCR processing, and successful export notifications.
+### Step 1: Document Ingestion
+- User uploads PDF or Image.
+- `pdfToImages` converts PDF pages into high-resolution PNG Data URIs.
+- State initializes with `DocumentPage` objects.
+
+### Step 2: Table Region Detection
+- **Auto-Detection**: `detectTableRegions` uses OpenCV's `adaptiveThreshold` and `findContours` to suggest bounding boxes for tables based on area density.
+- **Manual Selection**: `TableSelector` allows users to draw `TableRegion` objects directly on the page canvas.
+
+### Step 3: Grid Refinement & Preprocessing
+- **Grid Detection**: `detectLinesInSingleRegion` applies vertical/horizontal morphological kernels to identify cell boundaries.
+- **Image Cleanup**: Users configure `PreprocessingOptions`:
+  - **Binarization**: Global (Binary) or Adaptive (Mean/Gaussian).
+  - **Deskew**: Automatic rotation correction.
+  - **Denoise**: Median blur for speckle removal.
+- **Preview**: `getPreprocessedPreview` generates a real-time high-contrast visualization of how the OCR engine will "see" the table.
+
+### Step 4: Extraction Engine
+`processTablesOnPage` orchestrates the extraction:
+1. **Engine Selection**:
+   - **Tesseract.js**: Performs local OCR using multi-language workers.
+   - **AI Engine**: 
+     - **Local**: Direct client fetch (bypassing server) for privacy and speed with local models (llama.cpp).
+     - **Remote**: Server Action proxy (`callAiEngineAction`) to bypass CORS and protect API keys.
+2. **Cell-by-Cell Processing**:
+   - The region is cropped into individual cells based on grid guides.
+   - Each cell is preprocessed according to region-specific rules.
+   - Content is extracted and mapped to a structured `ExtractedTable` object.
+
+### Step 5: Export
+- Extracted data is presented in an interactive `table` view.
+- Content can be exported via `exporter.ts` into:
+  - **CSV**: Plain comma-separated values.
+  - **JSON**: Structured object data.
+  - **Markdown**: GFM-compatible tables.
+  - **HTML**: Standard table markup.
+
+## 4. Key Functions Reference
+
+| Function | File | Purpose |
+| :--- | :--- | :--- |
+| `detectTableRegions` | `processor.ts` | OpenCV contour detection for table discovery. |
+| `detectLinesInSingleRegion` | `processor.ts` | Morphological analysis for grid line identification. |
+| `preprocessMatForOcr` | `processor.ts` | Advanced OpenCV image cleaning pipeline. |
+| `processTablesOnPage` | `processor.ts` | Main engine loop for cell extraction. |
+| `callAiEngineAction` | `ai-ocr.ts` | Server-side proxy for external Vision APIs. |
+| `pdfToImages` | `pdf-loader.ts` | PDF.js implementation for document loading. |
+
+## 5. UI Architecture
+- **Workflow State**: Managed in `page.tsx` via `status` ('uploading' | 'selecting-tables' | 'refining' | 'ocr-processing' | 'completed').
+- **LineEditor**: A custom SVG/HTML overlay for interactive grid manipulation.
+- **TableSelector**: A canvas-based drawing interface for region definition.
+- **Engine Settings**: A global popover for switching between Tesseract and custom AI configurations.
