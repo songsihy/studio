@@ -110,8 +110,9 @@ export async function detectLinesInRegions(
 }
 
 /**
- * Drop-Left cluster resolution. 
- * Groups lines within threshold and preserves the rightmost line.
+ * Merge Close Lines implementing:
+ * 1. Wired-First (Physical borders prioritized)
+ * 2. Drop-Left Cluster Resolution (Keep only the rightmost anchor)
  */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
@@ -134,10 +135,10 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 }
 
 function selectRightmostInGroup(group: TableLine[]): TableLine {
-  // Wired-First: If a group contains a wired line, prefer it, but still apply drop-left within wired lines
+  // prioritize wired lines if present, but still apply drop-left within them
   const wired = group.filter(l => l.id.startsWith('w-'));
-  if (wired.length > 0) return wired[wired.length - 1]; // Rightmost wired
-  return group[group.length - 1]; // Rightmost wireless
+  if (wired.length > 0) return wired[wired.length - 1]; 
+  return group[group.length - 1]; // Rightmost logic for wireless
 }
 
 export async function detectLinesInSingleRegion(
@@ -180,7 +181,7 @@ export async function detectLinesInSingleRegion(
         let wirelessV: TableLine[] = [];
         let wirelessH: TableLine[] = [];
 
-        // Wired morphology
+        // Wired Morphology (Physical borders)
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 30))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
@@ -201,7 +202,7 @@ export async function detectLinesInSingleRegion(
           if (count > w * 0.35) wiredH.push({ id: `w-h-${i}`, type: 'horizontal', position: (i / hMat.rows) * 100 });
         }
 
-        // Wireless layout analysis (uses Tesseract locally for Step 3)
+        // Wireless layout analysis (Step 3 text block detection via Tesseract)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
@@ -243,7 +244,7 @@ export async function detectLinesInSingleRegion(
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // Apply Drop-Left merging logic
+        // Apply Drop-Left and Wired-First merging logic
         let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
         let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
 
@@ -372,7 +373,7 @@ export async function processTablesOnPage(
   let processedRegionsCount = 0;
 
   for (const region of regions) {
-    const scale = 2.5; 
+    const scale = 2.5; // Optimized Lanczos upscale for dense text
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const rowsCount = hCoords.length - 1;
@@ -418,7 +419,7 @@ export async function processTablesOnPage(
           }
         }
       } else {
-        // Tesseract Single Pass
+        // Tesseract/Scribe Single Pass Layout Mapping
         const worker = await createWorker(language);
         const { data } = await worker.recognize(regionCanvas);
         data.words.forEach((word: any) => {
@@ -436,7 +437,7 @@ export async function processTablesOnPage(
       for (let r = 0; r < rowsCount; r++) {
         for (let c = 0; c < colsCount; c++) {
           const cellCanvas = document.createElement('canvas');
-          const padding = 0.1; // 10% padding to avoid clipping
+          const padding = 0.1; 
           const xStart = Math.max(0, vCoords[c] - (vCoords[c+1] - vCoords[c]) * padding);
           const xEnd = Math.min(100, vCoords[c+1] + (vCoords[c+1] - vCoords[c]) * padding);
           const yStart = Math.max(0, hCoords[r] - (hCoords[r+1] - hCoords[r]) * padding);

@@ -16,11 +16,11 @@ import {
   Grid3X3, 
   Cpu,
   Bot,
+  PenTool,
+  Layers,
+  Sparkles,
   Globe,
-  Key,
-  MessageSquare,
-  Zap,
-  PenTool
+  Key
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -45,12 +45,10 @@ import {
   exportToHTML, 
   downloadFile 
 } from '@/lib/ocr/exporter';
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { detectTableRegions, processTablesOnPage, detectLinesInRegions } from '@/lib/ocr/processor';
 import { pdfToImages } from '@/lib/ocr/pdf-loader';
@@ -118,6 +116,7 @@ export default function TableScanPro() {
       const detected = await detectTableRegions(imageSrc);
       updateCurrentPageRegions(detected);
     } catch (err) {
+      console.error(err);
     } finally {
       setIsDetecting(false);
     }
@@ -188,7 +187,7 @@ export default function TableScanPro() {
 
   const runOCR = async () => {
     if (engineConfig.type === 'ai' && !engineConfig.aiConfig.apiKey) {
-      toast({ variant: "destructive", title: "API Configuration Missing" });
+      toast({ variant: "destructive", title: "API Configuration Missing", description: "Please enter your API Key in Step 2 settings." });
       return;
     }
     setStatus('ocr-processing');
@@ -265,7 +264,11 @@ export default function TableScanPro() {
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
       {!isCvLoaded && (
-        <Alert className="mb-6 bg-primary/10 border-primary/20 text-primary"><AlertDescription className="text-xs font-medium">Initializing Vision Engine...</AlertDescription></Alert>
+        <Alert className="mb-6 bg-primary/10 border-primary/20 text-primary">
+          <AlertDescription className="text-xs font-medium flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin" /> Initializing Vision Engine...
+          </AlertDescription>
+        </Alert>
       )}
 
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
@@ -275,60 +278,11 @@ export default function TableScanPro() {
         </div>
         
         <div className="flex items-center gap-4">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="h-10 gap-2 bg-card shadow-sm">
-                <Settings size={18} /> Engine Settings
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[400px] p-0" align="end">
-              <Tabs defaultValue={engineConfig.type} onValueChange={(v) => setEngineConfig(p => ({ ...p, type: v as any }))}>
-                <TabsList className="w-full h-12">
-                  <TabsTrigger value="tesseract" className="flex-1 gap-2"><Cpu size={14} /> Tesseract</TabsTrigger>
-                  <TabsTrigger value="scribe" className="flex-1 gap-2"><PenTool size={14} /> Scribe</TabsTrigger>
-                  <TabsTrigger value="ai" className="flex-1 gap-2"><Bot size={14} /> AI</TabsTrigger>
-                </TabsList>
-                <TabsContent value="tesseract" className="p-4 space-y-4">
-                  <Label className="text-xs font-bold uppercase text-muted-foreground">Languages</Label>
-                  <ScrollArea className="h-48 border rounded-md p-3">
-                    {SUPPORTED_LANGS.map(lang => (
-                      <div key={lang.id} className="flex items-center space-x-2 mb-2">
-                        <Checkbox id={lang.id} checked={selectedLangs.includes(lang.id)} onCheckedChange={() => setSelectedLangs(p => p.includes(lang.id) ? p.filter(l => l !== lang.id) : [...p, lang.id])} />
-                        <Label htmlFor={lang.id} className="text-sm font-medium">{lang.label}</Label>
-                      </div>
-                    ))}
-                  </ScrollArea>
-                </TabsContent>
-                <TabsContent value="scribe" className="p-4 space-y-4">
-                  <div className="p-4 bg-muted/30 rounded-lg text-center space-y-2">
-                    <PenTool size={24} className="mx-auto text-primary" />
-                    <p className="text-xs font-medium">Scribe.js Engine</p>
-                    <p className="text-[10px] text-muted-foreground italic">Powerful local layout recognition optimized for multi-language tables.</p>
-                  </div>
-                  <Label className="text-xs font-bold uppercase text-muted-foreground">Languages</Label>
-                  <ScrollArea className="h-32 border rounded-md p-3">
-                    {SUPPORTED_LANGS.slice(0, 5).map(lang => (
-                      <div key={lang.id} className="flex items-center space-x-2 mb-2">
-                        <Checkbox id={`scribe-${lang.id}`} checked={selectedLangs.includes(lang.id)} onCheckedChange={() => setSelectedLangs(p => p.includes(lang.id) ? p.filter(l => l !== lang.id) : [...p, lang.id])} />
-                        <Label htmlFor={`scribe-${lang.id}`} className="text-sm font-medium">{lang.label}</Label>
-                      </div>
-                    ))}
-                  </ScrollArea>
-                </TabsContent>
-                <TabsContent value="ai" className="p-4 space-y-4">
-                  <div className="space-y-2">
-                    <Label className="text-[10px] font-bold">API KEY</Label>
-                    <Input type="password" value={engineConfig.aiConfig.apiKey} onChange={(e) => setEngineConfig(p => ({ ...p, aiConfig: { ...p.aiConfig, apiKey: e.target.value } }))} placeholder="sk-..." />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-[10px] font-bold">Model</Label>
-                    <Input value={engineConfig.aiConfig.model} onChange={(e) => setEngineConfig(p => ({ ...p, aiConfig: { ...p.aiConfig, model: e.target.value } }))} placeholder="gpt-4o" />
-                  </div>
-                </TabsContent>
-              </Tabs>
-            </PopoverContent>
-          </Popover>
-          {status !== 'idle' && <Button variant="ghost" onClick={reset}><RotateCcw className="w-4 h-4 mr-2" /> Reset</Button>}
+          {status !== 'idle' && (
+            <Button variant="ghost" onClick={reset} className="text-muted-foreground">
+              <RotateCcw className="w-4 h-4 mr-2" /> Start Over
+            </Button>
+          )}
         </div>
       </header>
 
@@ -355,19 +309,104 @@ export default function TableScanPro() {
           ) : (
             <div className="space-y-6">
               {status === 'selecting-tables' && (
-                <Card className="border-2 shadow-xl overflow-hidden">
-                  <CardHeader className="bg-muted/30 border-b py-4 flex flex-row items-center justify-between">
-                    <CardTitle className="text-lg flex items-center gap-2"><ScanSearch className="w-5 h-5" /> Step 2: Define Tables</CardTitle>
-                    <Button variant="outline" size="sm" onClick={() => currentPage && autoDetectRegions(currentPage.originalImage)} disabled={isDetecting}>Auto-Detect</Button>
-                  </CardHeader>
-                  <TableSelector imageSrc={currentPage?.originalImage || null} regions={currentPage?.tableRegions || []} onRegionsChange={updateCurrentPageRegions} allPages={pages} currentPageIndex={currentPageIndex} onNavigateToPage={handlePageSelect} />
-                </Card>
+                <div className="space-y-6">
+                  <Card className="border-2 shadow-sm overflow-hidden">
+                    <CardHeader className="bg-muted/30 border-b py-4">
+                      <CardTitle className="text-sm font-bold flex items-center gap-2 uppercase tracking-wider">
+                        <Settings className="w-4 h-4 text-primary" /> 1. OCR Engine Settings
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <Tabs defaultValue={engineConfig.type} onValueChange={(v) => setEngineConfig(p => ({ ...p, type: v as any }))}>
+                        <TabsList className="w-full h-12 rounded-none border-b bg-transparent">
+                          <TabsTrigger value="tesseract" className="flex-1 gap-2 data-[state=active]:bg-primary/5 data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"><Cpu size={14} /> Tesseract.js</TabsTrigger>
+                          <TabsTrigger value="scribe" className="flex-1 gap-2 data-[state=active]:bg-primary/5 data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"><PenTool size={14} /> Scribe (Optimized)</TabsTrigger>
+                          <TabsTrigger value="ai" className="flex-1 gap-2 data-[state=active]:bg-primary/5 data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"><Bot size={14} /> AI Engine</TabsTrigger>
+                        </TabsList>
+                        <TabsContent value="tesseract" className="p-6 space-y-4 m-0">
+                          <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-3">
+                              <Label className="text-[10px] font-bold uppercase text-muted-foreground">Recognition Languages</Label>
+                              <ScrollArea className="h-40 border rounded-lg p-3 bg-muted/20">
+                                {SUPPORTED_LANGS.map(lang => (
+                                  <div key={lang.id} className="flex items-center space-x-2 mb-2">
+                                    <Checkbox id={lang.id} checked={selectedLangs.includes(lang.id)} onCheckedChange={() => setSelectedLangs(p => p.includes(lang.id) ? p.filter(l => l !== lang.id) : [...p, lang.id])} />
+                                    <Label htmlFor={lang.id} className="text-xs font-medium cursor-pointer">{lang.label}</Label>
+                                  </div>
+                                ))}
+                              </ScrollArea>
+                            </div>
+                            <div className="space-y-4">
+                              <div className="p-4 rounded-xl border bg-primary/5 space-y-2">
+                                <h4 className="text-xs font-bold text-primary">Tesseract Engine</h4>
+                                <p className="text-[10px] leading-relaxed text-muted-foreground">Standard high-performance OCR. Optimized for multi-language tables with layout awareness.</p>
+                              </div>
+                            </div>
+                          </div>
+                        </TabsContent>
+                        <TabsContent value="scribe" className="p-6 space-y-4 m-0">
+                          <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-3">
+                              <Label className="text-[10px] font-bold uppercase text-muted-foreground">Languages</Label>
+                              <ScrollArea className="h-40 border rounded-lg p-3 bg-muted/20">
+                                {SUPPORTED_LANGS.slice(0, 5).map(lang => (
+                                  <div key={lang.id} className="flex items-center space-x-2 mb-2">
+                                    <Checkbox id={`scribe-${lang.id}`} checked={selectedLangs.includes(lang.id)} onCheckedChange={() => setSelectedLangs(p => p.includes(lang.id) ? p.filter(l => l !== lang.id) : [...p, lang.id])} />
+                                    <Label htmlFor={`scribe-${lang.id}`} className="text-xs font-medium cursor-pointer">{lang.label}</Label>
+                                  </div>
+                                ))}
+                              </ScrollArea>
+                            </div>
+                            <div className="space-y-4">
+                              <div className="p-4 rounded-xl border bg-primary/5 space-y-2">
+                                <h4 className="text-xs font-bold text-primary">Scribe Logic</h4>
+                                <p className="text-[10px] leading-relaxed text-muted-foreground">Specialized layout analysis that prioritizes vertical text flow and mixed character sets.</p>
+                              </div>
+                            </div>
+                          </div>
+                        </TabsContent>
+                        <TabsContent value="ai" className="p-6 space-y-4 m-0">
+                          <div className="space-y-4 max-w-md">
+                            <div className="space-y-2">
+                              <Label className="text-[10px] font-bold flex items-center gap-1"><Key size={10} /> API KEY</Label>
+                              <Input type="password" value={engineConfig.aiConfig.apiKey} onChange={(e) => setEngineConfig(p => ({ ...p, aiConfig: { ...p.aiConfig, apiKey: e.target.value } }))} placeholder="sk-..." className="h-8 text-xs" />
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-[10px] font-bold flex items-center gap-1"><Cpu size={10} /> Model</Label>
+                              <Input value={engineConfig.aiConfig.model} onChange={(e) => setEngineConfig(p => ({ ...p, aiConfig: { ...p.aiConfig, model: e.target.value } }))} placeholder="gpt-4o" className="h-8 text-xs" />
+                            </div>
+                          </div>
+                        </TabsContent>
+                      </Tabs>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-2 shadow-xl overflow-hidden">
+                    <CardHeader className="bg-muted/30 border-b py-4 flex flex-row items-center justify-between">
+                      <CardTitle className="text-sm font-bold flex items-center gap-2 uppercase tracking-wider">
+                        <ScanSearch className="w-4 h-4 text-primary" /> 2. Define Table Regions
+                      </CardTitle>
+                      <Button variant="outline" size="sm" className="h-7 text-[10px] font-bold" onClick={() => currentPage && autoDetectRegions(currentPage.originalImage)} disabled={isDetecting}>
+                        {isDetecting ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : null}
+                        AUTO-DETECT TABLES
+                      </Button>
+                    </CardHeader>
+                    <TableSelector 
+                      imageSrc={currentPage?.originalImage || null} 
+                      regions={currentPage?.tableRegions || []} 
+                      onRegionsChange={updateCurrentPageRegions} 
+                      allPages={pages} 
+                      currentPageIndex={currentPageIndex} 
+                      onNavigateToPage={handlePageSelect} 
+                    />
+                  </Card>
+                </div>
               )}
               {status === 'refining' && (
                 <div className="space-y-8">
                   {pages.map((page, pIdx) => (
                     <React.Fragment key={page.id}>
-                      {page.tableRegions.map((region, rIdx) => (
+                      {page.tableRegions.map((region) => (
                         <LineEditor 
                           key={region.id} 
                           title={`${region.name} (Page ${pIdx + 1})`} 
@@ -388,30 +427,38 @@ export default function TableScanPro() {
               )}
               {status === 'ocr-processing' && (
                 <Card className="p-12 text-center space-y-6">
-                  <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto" />
-                  <Progress value={progress} className="h-2 max-w-md mx-auto" />
-                  <p className="text-sm font-bold text-primary">{progress}% Extraction In Progress</p>
+                  <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-lg font-bold">Extracting Data...</p>
+                    <p className="text-sm text-muted-foreground">Using {engineConfig.type.toUpperCase()} Engine to process your tables.</p>
+                  </div>
+                  <div className="max-w-md mx-auto space-y-2">
+                    <Progress value={progress} className="h-2" />
+                    <p className="text-[10px] font-bold text-primary text-right">{progress}%</p>
+                  </div>
                 </Card>
               )}
               {status === 'completed' && (
                 <div className="space-y-8">
                   {allExtractedData.map((table) => (
                     <Card key={table.id} className="border-2 shadow-lg overflow-hidden">
-                      <CardHeader className="bg-muted/30 flex flex-row items-center justify-between">
-                        <CardTitle className="text-lg">{table.tableName}</CardTitle>
+                      <CardHeader className="bg-muted/30 flex flex-row items-center justify-between border-b">
+                        <CardTitle className="text-sm font-bold uppercase tracking-wider">{table.tableName}</CardTitle>
                         <div className="flex gap-2">
                           {['csv', 'md', 'html'].map(fmt => <Button key={fmt} size="sm" variant="outline" className="h-7 text-[10px] uppercase font-bold" onClick={() => handleExport(table, fmt as any)}>{fmt}</Button>)}
                         </div>
                       </CardHeader>
-                      <CardContent className="p-0 overflow-auto max-h-[400px]">
-                        <table className="w-full text-xs">
+                      <CardContent className="p-0 overflow-auto max-h-[500px]">
+                        <table className="w-full text-xs border-collapse">
                           <thead className="bg-muted/50 sticky top-0">
-                            <tr>{table.headers.map((h, i) => <th key={i} className="px-4 py-3 text-left border-b border-r">{h}</th>)}</tr>
+                            <tr>{table.headers.map((h, i) => <th key={i} className="px-4 py-3 text-left border-b border-r font-bold text-muted-foreground uppercase tracking-tight">{h}</th>)}</tr>
                           </thead>
                           <tbody>
                             {table.rows.slice(1).map((row, ri) => (
-                              <tr key={ri} className="hover:bg-muted/20 border-b">
-                                {row.map((cell, ci) => <td key={ci} className="px-4 py-2 border-r">{cell}</td>)}
+                              <tr key={ri} className="hover:bg-primary/5 transition-colors border-b">
+                                {row.map((cell, ci) => <td key={ci} className="px-4 py-2 border-r text-foreground/80">{cell}</td>)}
                               </tr>
                             ))}
                           </tbody>
@@ -427,26 +474,76 @@ export default function TableScanPro() {
 
         {status !== 'idle' && (
           <aside className="lg:col-span-3 space-y-6">
-            <Card className="bg-primary text-primary-foreground border-none">
-              <CardHeader><CardTitle className="text-lg">Workflow</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                {[
-                  { id: 'selecting-tables', label: 'Select Areas', step: 2 },
-                  { id: 'refining', label: 'Refine Grids', step: 3 },
-                  { id: 'ocr-processing', label: 'Extracting', step: 4 }
-                ].map((s) => (
-                  <div key={s.id} className="flex items-center gap-3">
-                    <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold", status === s.id ? "bg-white text-primary" : "bg-white/20")}>{s.step}</div>
-                    <span className={cn("text-sm", status === s.id ? "font-bold" : "opacity-60")}>{s.label}</span>
-                  </div>
-                ))}
-                <div className="flex gap-2 mt-4 pt-4 border-t border-white/20">
-                  <Button variant="outline" className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/20" onClick={goBack}><ChevronLeft className="w-4 h-4" /></Button>
-                  {status === 'selecting-tables' && <Button className="flex-1 bg-secondary text-secondary-foreground" onClick={proceedToRefine}>Next</Button>}
-                  {status === 'refining' && <Button className="flex-1 bg-secondary text-secondary-foreground" onClick={runOCR}>Extract</Button>}
+            <Card className="bg-primary text-primary-foreground border-none shadow-xl overflow-hidden">
+              <div className="p-6 space-y-6">
+                <div className="space-y-1">
+                  <h3 className="text-lg font-bold">Workflow Progress</h3>
+                  <p className="text-xs text-primary-foreground/70">Complete each step to extract data.</p>
                 </div>
-              </CardContent>
+                
+                <div className="space-y-4">
+                  {[
+                    { id: 'selecting-tables', label: '1. Choose Engine & Areas', icon: Grid3X3 },
+                    { id: 'refining', label: '2. Refine Grid Lines', icon: Layers },
+                    { id: 'ocr-processing', label: '3. Extract Data', icon: Sparkles }
+                  ].map((s, idx) => {
+                    const isActive = status === s.id;
+                    const isDone = (status === 'refining' && idx === 0) || (status === 'ocr-processing' && idx <= 1) || (status === 'completed');
+                    return (
+                      <div key={s.id} className="flex items-center gap-3">
+                        <div className={cn(
+                          "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all",
+                          isActive ? "bg-white text-primary shadow-lg scale-110" : isDone ? "bg-secondary text-secondary-foreground" : "bg-white/10"
+                        )}>
+                          {isDone ? <CheckCircle2 className="w-4 h-4" /> : idx + 1}
+                        </div>
+                        <span className={cn("text-sm transition-all", isActive ? "font-bold" : "opacity-60")}>{s.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-col gap-3 pt-6 border-t border-white/20">
+                  {status === 'selecting-tables' && (
+                    <Button 
+                      className="w-full bg-secondary text-secondary-foreground hover:bg-secondary/90 font-bold h-11" 
+                      onClick={proceedToRefine}
+                      disabled={pages.every(p => p.tableRegions.length === 0)}
+                    >
+                      CONTINUE TO REFINE <ChevronRight className="ml-2 w-4 h-4" />
+                    </Button>
+                  )}
+                  {status === 'refining' && (
+                    <Button className="w-full bg-secondary text-secondary-foreground hover:bg-secondary/90 font-bold h-11" onClick={runOCR}>
+                      START EXTRACTION <ChevronRight className="ml-2 w-4 h-4" />
+                    </Button>
+                  )}
+                  {status !== 'selecting-tables' && status !== 'ocr-processing' && (
+                    <Button variant="outline" className="w-full bg-white/10 hover:bg-white/20 text-white border-white/20" onClick={goBack}>
+                      <ChevronLeft className="mr-2 w-4 h-4" /> BACK
+                    </Button>
+                  )}
+                </div>
+              </div>
             </Card>
+
+            {status === 'completed' && (
+              <Card className="border-2 border-primary/20 bg-primary/5">
+                <CardHeader className="py-4">
+                  <CardTitle className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-secondary" /> Extraction Complete
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Data has been extracted using the {engineConfig.type.toUpperCase()} engine. You can now export individual tables or refine the grid and re-run.
+                  </p>
+                  <Button variant="outline" className="w-full h-8 text-[10px] font-bold" onClick={() => setStatus('refining')}>
+                    RE-ADJUST GRIDS
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
           </aside>
         )}
       </main>
