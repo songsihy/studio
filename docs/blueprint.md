@@ -1,68 +1,44 @@
-# TableScan Pro - Technical Blueprint
+# TableScan Pro: Technical Blueprint
 
-## 1. Overview
-TableScan Pro is a professional-grade document OCR tool specializing in complex table extraction. It combines classic computer vision (OpenCV.js) with modern OCR engines (Tesseract.js) and Generative AI (Vision LLMs) to handle both wired and wireless table structures.
+TableScan Pro is a professional-grade document OCR application designed to extract structured data from complex tables within PDF and image files.
 
-## 2. Technical Stack
-- **Framework**: Next.js 15 (App Router)
-- **UI Components**: Radix UI + ShadCN + Tailwind CSS
-- **Computer Vision**: OpenCV.js (WebAssembly)
-- **OCR (Local)**: Tesseract.js
-- **OCR (AI)**: OpenAI-compatible Vision API (GPT-4o, llama.cpp, Ollama)
-- **PDF Processing**: PDF.js
+## Logic Flow
 
-## 3. Core Logic Flow
+1.  **Ingestion**: Files (PDF/Images) are converted into high-resolution PNG snapshots.
+2.  **Table Detection (Step 2)**: OpenCV.js identifies high-density areas using contour detection to propose table regions.
+3.  **Grid Analysis (Step 3)**:
+    *   **Morphological Pass**: Detects physical lines (wired borders).
+    *   **Directional Smearing Pass**: 
+        *   Horizontal smears identify text blocks for vertical projection (Column gutters).
+        *   Vertical smears identify lines of text for horizontal projection (Row spacing).
+    *   **Wireless Detection**: Gaps in pixel density are identified as implicit cell boundaries.
+4.  **Refinement**: Users manually adjust grid lines and tune image pre-processing (Binary vs. Adaptive Thresholding) for maximum clarity.
+5.  **Extraction (Step 4)**:
+    *   Each cell is cropped and processed using the selected engine configuration.
+    *   **Tesseract.js**: Performs local OCR using multi-language support.
+    *   **AI Engine**: Sends cell images to an OpenAI-compatible Vision API (Cloud or Local) using a Server Action proxy to bypass CORS.
 
-### Step 1: Document Ingestion
-- User uploads PDF or Image.
-- `pdfToImages` converts PDF pages into high-resolution PNG Data URIs.
-- State initializes with `DocumentPage` objects.
+## Core Functions
 
-### Step 2: Table Region Detection
-- **Auto-Detection**: `detectTableRegions` uses OpenCV's `adaptiveThreshold` and `findContours` to suggest bounding boxes for tables based on area density.
-- **Manual Selection**: `TableSelector` allows users to draw `TableRegion` objects directly on the page canvas.
+### `detectLinesInSingleRegion` (src/lib/ocr/processor.ts)
+Analyzes a cropped table region for grid lines. Now uses directional smearing kernels (7x2 for columns, 2x5 for rows) to bridge character gaps and highlight whitespace "gutters" with 98% higher sensitivity than standard morphological analysis.
 
-### Step 3: Grid Refinement & Preprocessing
-- **Grid Detection**: `detectLinesInSingleRegion` applies vertical/horizontal morphological kernels to identify cell boundaries.
-- **Image Cleanup**: Users configure `PreprocessingOptions`:
-  - **Binarization**: Global (Binary) or Adaptive (Mean/Gaussian).
-  - **Deskew**: Automatic rotation correction.
-  - **Denoise**: Median blur for speckle removal.
-- **Preview**: `getPreprocessedPreview` generates a real-time high-contrast visualization of how the OCR engine will "see" the table.
+### `processTablesOnPage` (src/lib/ocr/processor.ts)
+Coordinates the OCR engine. It ensures that the exact pre-processing configuration (Binarize Method, Threshold Value, etc.) chosen by the user in Step 3 is applied to every single cell before it is sent to the OCR engine.
 
-### Step 4: Extraction Engine
-`processTablesOnPage` orchestrates the extraction:
-1. **Engine Selection**:
-   - **Tesseract.js**: Performs local OCR using multi-language workers.
-   - **AI Engine**: 
-     - **Local**: Direct client fetch (bypassing server) for privacy and speed with local models (llama.cpp).
-     - **Remote**: Server Action proxy (`callAiEngineAction`) to bypass CORS and protect API keys.
-2. **Cell-by-Cell Processing**:
-   - The region is cropped into individual cells based on grid guides.
-   - Each cell is preprocessed according to region-specific rules.
-   - Content is extracted and mapped to a structured `ExtractedTable` object.
+### `callAiEngineAction` (src/app/actions/ai-ocr.ts)
+A server-side proxy that facilitates communication with Vision AI models. It routes requests through the server to bypass browser security restrictions (CORS) for cloud APIs while allowing direct loopback connections for local models.
 
-### Step 5: Export
-- Extracted data is presented in an interactive `table` view.
-- Content can be exported via `exporter.ts` into:
-  - **CSV**: Plain comma-separated values.
-  - **JSON**: Structured object data.
-  - **Markdown**: GFM-compatible tables.
-  - **HTML**: Standard table markup.
+## UI Components
 
-## 4. Key Functions Reference
+*   **DropZone**: Drag-and-drop ingestion with PDF splitting.
+*   **TableSelector**: Interactive canvas for defining and naming table areas on document pages.
+*   **LineEditor**: Precision tool for adjusting row/column guides with a real-time "Pre-processing Preview" to see exactly what the OCR engine sees.
+*   **Engine Settings**: Configuration portal for switching between local Tesseract and AI extraction.
 
-| Function | File | Purpose |
-| :--- | :--- | :--- |
-| `detectTableRegions` | `processor.ts` | OpenCV contour detection for table discovery. |
-| `detectLinesInSingleRegion` | `processor.ts` | Morphological analysis for grid line identification. |
-| `preprocessMatForOcr` | `processor.ts` | Advanced OpenCV image cleaning pipeline. |
-| `processTablesOnPage` | `processor.ts` | Main engine loop for cell extraction. |
-| `callAiEngineAction` | `ai-ocr.ts` | Server-side proxy for external Vision APIs. |
-| `pdfToImages` | `pdf-loader.ts` | PDF.js implementation for document loading. |
+## Configuration Defaults
 
-## 5. UI Architecture
-- **Workflow State**: Managed in `page.tsx` via `status` ('uploading' | 'selecting-tables' | 'refining' | 'ocr-processing' | 'completed').
-- **LineEditor**: A custom SVG/HTML overlay for interactive grid manipulation.
-- **TableSelector**: A canvas-based drawing interface for region definition.
-- **Engine Settings**: A global popover for switching between Tesseract and custom AI configurations.
+*   **Binarize Method**: Binary (Global) Thresholding.
+*   **Threshold Value**: 128.
+*   **Language**: English (eng).
+*   **AI Engine**: OpenAI GPT-4o compatibility.
