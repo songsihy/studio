@@ -123,21 +123,20 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
   
-  // Sort by position
   const sorted = [...lines].sort((a, b) => a.position - b.position);
   const merged: TableLine[] = [];
   
+  if (sorted.length === 0) return [];
+
   let currentGroup: TableLine[] = [sorted[0]];
   
   for (let i = 1; i < sorted.length; i++) {
     const line = sorted[i];
     const lastInGroup = currentGroup[currentGroup.length - 1];
     
-    // Check distance between current line and the last line in the group
     if (line.position - lastInGroup.position < threshold) {
       currentGroup.push(line);
     } else {
-      // Average the positions in the current group
       const avgPos = currentGroup.reduce((acc, l) => acc + l.position, 0) / currentGroup.length;
       merged.push({
         id: currentGroup[0].id,
@@ -148,7 +147,6 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
     }
   }
   
-  // Merge final group
   const avgPos = currentGroup.reduce((acc, l) => acc + l.position, 0) / currentGroup.length;
   merged.push({
     id: currentGroup[0].id,
@@ -160,10 +158,7 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 }
 
 /**
- * Detects grid lines using a hybrid approach:
- * 1. OpenCV Morphological Analysis (Wired Lines)
- * 2. Tesseract Layout Analysis (Wireless Lines via text block clustering)
- * 3. Whitespace Gap Detection (Fallback for empty/sparse areas)
+ * Detects grid lines using a hybrid approach with intelligent wireless-wired pruning.
  */
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
@@ -197,35 +192,15 @@ export async function detectLinesInSingleRegion(
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
 
-        // Deskew attempt with safety check
-        if (cv.findNonZero && cv.minAreaRect) {
-          const threshForSkew = new cv.Mat();
-          cv.threshold(gray, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-          const points = new cv.Mat();
-          try {
-            cv.findNonZero(threshForSkew, points);
-            if (!points.empty()) {
-              const box = cv.minAreaRect(points);
-              let angle = box.angle;
-              if (angle < -45) angle = angle + 90;
-              if (Math.abs(angle) > 0.4) {
-                const center = new cv.Point(gray.cols / 2, gray.rows / 2);
-                const M = cv.getRotationMatrix2D(center, angle, 1.0);
-                cv.warpAffine(gray, gray, M, new cv.Size(gray.cols, gray.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
-                M.delete();
-              }
-            }
-          } catch (e) { console.warn("Deskewing skip:", e); }
-          threshForSkew.delete(); points.delete();
-        }
-
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-        let vLines: TableLine[] = [];
-        let hLines: TableLine[] = [];
+        let wiredV: TableLine[] = [];
+        let wiredH: TableLine[] = [];
+        let wirelessV: TableLine[] = [];
+        let wirelessH: TableLine[] = [];
 
-        // --- 1. Morphological Wired Detection ---
+        // 1. Wired Detection
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 25))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
@@ -234,8 +209,7 @@ export async function detectLinesInSingleRegion(
           let count = 0;
           for (let i = 0; i < vMat.rows; i++) if (vMat.ucharAt(i, j) > 0) count++;
           if (count > h * 0.45) {
-            const pos = (j / vMat.cols) * 100;
-            vLines.push({ id: `wired-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
+            wiredV.push({ id: `w-v-${j}`, type: 'vertical', position: (j / vMat.cols) * 100 });
           }
         }
 
@@ -247,95 +221,93 @@ export async function detectLinesInSingleRegion(
           let count = 0;
           for (let j = 0; j < hMat.cols; j++) if (hMat.ucharAt(i, j) > 0) count++;
           if (count > w * 0.45) {
-            const pos = (i / hMat.rows) * 100;
-            hLines.push({ id: `wired-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
+            wiredH.push({ id: `w-h-${i}`, type: 'horizontal', position: (i / hMat.rows) * 100 });
           }
         }
 
-        // --- 2. Tesseract Layout Pass (Wireless Extraction) ---
+        // 2. Tesseract Layout Analysis (Wireless)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
-        
         const worker = existingWorker || await createWorker('eng');
         const { data } = await worker.recognize(tempCanvas);
         const wordBoxes = data.words.map((w: any) => w.bbox);
 
-        if (wordBoxes.length > 0) {
-          // Vertical Wireless
-          const xOccupancy = new Array(w).fill(false);
-          wordBoxes.forEach((box: any) => {
-            for (let i = box.x0; i < box.x1; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
-          });
-          const vGaps = findGapsInOccupancy(xOccupancy, Math.max(1, Math.floor(w * 0.002)));
-          vGaps.forEach(gapCenter => {
-            const pos = (gapCenter / w) * 100;
-            vLines.push({ id: `layout-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
-          });
-
-          // Horizontal Wireless (Rows) - Clustering Logic
-          const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
-          const rows: any[][] = [];
-          if (sortedWords.length > 0) {
-            let currentCluster = [sortedWords[0]];
-            for (let i = 1; i < sortedWords.length; i++) {
-              const word = sortedWords[i];
-              const prevWord = currentCluster[currentCluster.length - 1];
-              const wordH = word.y1 - word.y0;
-              const overlap = Math.min(word.y1, prevWord.y1) - Math.max(word.y0, prevWord.y0);
-              const verticalDist = Math.abs((word.y0 + word.y1) / 2 - (prevWord.y0 + prevWord.y1) / 2);
-              if (overlap > wordH * 0.3 || verticalDist < wordH * 0.5) {
-                currentCluster.push(word);
-              } else {
-                rows.push(currentCluster);
-                currentCluster = [word];
-              }
-            }
-            rows.push(currentCluster);
-          }
-
-          for (let i = 0; i < rows.length - 1; i++) {
-            const upperY1 = Math.max(...rows[i].map(w => w.y1));
-            const lowerY0 = Math.min(...rows[i + 1].map(w => w.y0));
-            const boundaryY = (upperY1 + lowerY0) / 2;
-            const pos = (boundaryY / h) * 100;
-            hLines.push({ id: `layout-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
-          }
-        }
-
-        // --- 3. Pure Whitespace Fallback ---
+        const xOccupancy = new Array(w).fill(false);
         const yOccupancy = new Array(h).fill(false);
-        for (let i = 0; i < h; i++) {
-          let count = 0;
-          for (let j = 0; j < w; j++) if (thresh.ucharAt(i, j) > 0) count++;
-          if (count > w * 0.005) yOccupancy[i] = true;
-        }
-        const hGaps = findGapsInOccupancy(yOccupancy, 1);
-        hGaps.forEach(gapCenter => {
-          const pos = (gapCenter / h) * 100;
-          hLines.push({ id: `ws-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
+        wordBoxes.forEach((box: any) => {
+          for (let i = box.x0; i < box.x1; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
+          for (let i = box.y0; i < box.y1; i++) if (i >= 0 && i < h) yOccupancy[i] = true;
         });
 
-        // --- 4. Final Merging and Cleaning ---
-        // Threshold: merge lines within 1.2% of each other
-        vLines = mergeCloseLines(vLines, 1.2);
-        hLines = mergeCloseLines(hLines, 1.2);
+        // Wireless Verticals
+        findGapsInOccupancy(xOccupancy, 1).forEach(gap => {
+          wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
+        });
 
-        // Keep lines away from extreme edges
-        vLines = vLines.filter(l => l.position > 0.5 && l.position < 99.5);
-        hLines = hLines.filter(l => l.position > 0.5 && l.position < 99.5);
+        // Wireless Horizontals (via clustering)
+        const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
+        const rows: any[][] = [];
+        if (sortedWords.length > 0) {
+          let cluster = [sortedWords[0]];
+          for (let i = 1; i < sortedWords.length; i++) {
+            const word = sortedWords[i];
+            const prev = cluster[cluster.length - 1];
+            const wordH = word.y1 - word.y0;
+            const overlap = Math.min(word.y1, prev.y1) - Math.max(word.y0, prev.y0);
+            if (overlap > wordH * 0.3) cluster.push(word);
+            else { rows.push(cluster); cluster = [word]; }
+          }
+          rows.push(cluster);
+        }
+        for (let i = 0; i < rows.length - 1; i++) {
+          const upper = Math.max(...rows[i].map(w => w.y1));
+          const lower = Math.min(...rows[i+1].map(w => w.y0));
+          wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
+        }
 
-        // Cleanup OpenCV
+        // 3. PRUNING: If no text between Wireless and Wired, discard the Wired line
+        const filteredWiredV = wiredV.filter(wv => {
+          const closestWL = wirelessV.reduce((prev, curr) => 
+            Math.abs(curr.position - wv.position) < Math.abs(prev.position - wv.position) ? curr : prev, 
+            wirelessV[0] || { position: -1000 }
+          );
+          if (closestWL.position < 0) return true;
+          const start = Math.min(wv.position, closestWL.position) * w / 100;
+          const end = Math.max(wv.position, closestWL.position) * w / 100;
+          let hasText = false;
+          for (let i = Math.floor(start); i < Math.ceil(end); i++) {
+            if (i >= 0 && i < w && xOccupancy[i]) { hasText = true; break; }
+          }
+          return hasText; 
+        });
+
+        const filteredWiredH = wiredH.filter(wh => {
+          const closestWL = wirelessH.reduce((prev, curr) => 
+            Math.abs(curr.position - wh.position) < Math.abs(prev.position - wh.position) ? curr : prev, 
+            wirelessH[0] || { position: -1000 }
+          );
+          if (closestWL.position < 0) return true;
+          const start = Math.min(wh.position, closestWL.position) * h / 100;
+          const end = Math.max(wh.position, closestWL.position) * h / 100;
+          let hasText = false;
+          for (let i = Math.floor(start); i < Math.ceil(end); i++) {
+            if (i >= 0 && i < h && yOccupancy[i]) { hasText = true; break; }
+          }
+          return hasText;
+        });
+
+        // 4. Final Merge
+        let finalV = mergeCloseLines([...filteredWiredV, ...wirelessV], 1.2);
+        let finalH = mergeCloseLines([...filteredWiredH, ...wirelessH], 1.2);
+
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
         if (!existingWorker) await worker.terminate();
 
-        vLines.sort((a, b) => a.position - b.position);
-        hLines.sort((a, b) => a.position - b.position);
-
-        resolve({ vLines, hLines });
+        resolve({ vLines: finalV, hLines: finalH });
       } catch (err) {
-        console.error("Hybrid line detection error:", err);
+        console.error("Hybrid detection error:", err);
         resolve({ vLines: [], hLines: [] });
       }
     };
