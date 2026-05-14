@@ -32,6 +32,7 @@ export interface PreprocessingOptions {
   thresholdMaxValue: number;
   adaptiveMethod: 'mean' | 'gaussian';
   thresholdType: 'binary' | 'binary_inv';
+  showTextBoxes?: boolean; // Visualization option
 }
 
 export interface TableRegion {

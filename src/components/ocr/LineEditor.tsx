@@ -1,9 +1,10 @@
+
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine, TableRegion, PreprocessingOptions } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, Settings2 } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, Settings2, BoxSelect } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -38,7 +39,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   onLinesChange,
   onPreprocessingChange,
   title,
-  language = 'eng'
+  language = 'eng+chi_tra'
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState<{ id: string; type: 'v' | 'h' } | null>(null);
@@ -60,7 +61,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     thresholdC: 2,
     thresholdMaxValue: 255,
     adaptiveMethod: 'gaussian',
-    thresholdType: 'binary'
+    thresholdType: 'binary',
+    showTextBoxes: false
   };
 
   useEffect(() => {
@@ -87,7 +89,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     if (!imageSrc) return;
     setIsPreviewLoading(true);
     try {
-      const uri = await getPreprocessedPreview(imageSrc, cropRect, preprocessing);
+      const uri = await getPreprocessedPreview(imageSrc, cropRect, preprocessing, language);
       setProcessedImageUri(uri);
     } catch (e) {
       console.error(e);
@@ -375,15 +377,30 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             </div>
           </div>
 
-          <Button 
-            size="sm" 
-            variant={showProcessedPreview ? "secondary" : "outline"} 
-            className="h-7 text-[10px] gap-1.5"
-            onClick={() => setShowProcessedPreview(!showProcessedPreview)}
-          >
-            {showProcessedPreview ? <EyeOff size={12} /> : <Eye size={12} />}
-            Preview Cleanup
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              size="sm" 
+              variant={preprocessing.showTextBoxes ? "secondary" : "outline"} 
+              className="h-7 text-[10px] gap-1.5"
+              onClick={() => {
+                togglePreprocessing('showTextBoxes');
+                setShowProcessedPreview(true);
+              }}
+            >
+              <BoxSelect size={12} />
+              Show Text Blocks
+            </Button>
+
+            <Button 
+              size="sm" 
+              variant={showProcessedPreview ? "secondary" : "outline"} 
+              className="h-7 text-[10px] gap-1.5"
+              onClick={() => setShowProcessedPreview(!showProcessedPreview)}
+            >
+              {showProcessedPreview ? <EyeOff size={12} /> : <Eye size={12} />}
+              Preview Cleanup
+            </Button>
+          </div>
         </div>
 
         <TooltipProvider>

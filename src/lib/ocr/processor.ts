@@ -1,3 +1,4 @@
+
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -71,7 +72,8 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
                 thresholdC: 2,
                 thresholdMaxValue: 255,
                 adaptiveMethod: 'gaussian',
-                thresholdType: 'binary'
+                thresholdType: 'binary',
+                showTextBoxes: false
               }
             });
           }
@@ -94,7 +96,7 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 /**
  * Detects grid lines within multiple regions using specified language context.
  */
-export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[], language: string = 'eng'): Promise<TableRegion[]> {
+export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[], language: string = 'eng+chi_tra'): Promise<TableRegion[]> {
   const updatedRegions: TableRegion[] = [];
   const worker = await createWorker(language);
   
@@ -118,8 +120,6 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 
 /**
  * Consolidates clustered lines into a single logical line.
- * Prioritizes physical Wired lines over Wireless guesses.
- * Within a cluster, favors the rightmost line if no wired lines exist.
  */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
@@ -142,19 +142,16 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   }
   
   merged.push(selectBestInGroup(currentGroup));
-  
   return merged;
 }
 
 function selectBestInGroup(group: TableLine[]): TableLine {
-  // If any line in the cluster is a Wired line (starts with 'w-'), we MUST reserve it.
+  // Priority: Physical Wired borders. Drop left lines in redundant clusters.
   const wiredLines = group.filter(l => l.id.startsWith('w-'));
   if (wiredLines.length > 0) {
-    // Favor the rightmost physical border if multiple exist in the cluster
-    return wiredLines[wiredLines.length - 1];
+    return wiredLines[wiredLines.length - 1]; // Rightmost physical line
   }
-  // Otherwise, drop redundant left lines and pick the rightmost wireless guess
-  return group[group.length - 1];
+  return group[group.length - 1]; // Rightmost logical line
 }
 
 /**
@@ -163,7 +160,7 @@ function selectBestInGroup(group: TableLine[]): TableLine {
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
   region: TableRegion, 
-  language: string = 'eng',
+  language: string = 'eng+chi_tra',
   existingWorker?: any
 ): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
   return new Promise(async (resolve) => {
@@ -193,7 +190,6 @@ export async function detectLinesInSingleRegion(
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
 
-        // Preprocess ROI for high contrast "Wired" detection
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
@@ -227,7 +223,7 @@ export async function detectLinesInSingleRegion(
           }
         }
 
-        // 2. Wireless Pass (Layout analysis via OCR word positions)
+        // 2. Wireless Pass (Layout analysis)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
@@ -235,25 +231,19 @@ export async function detectLinesInSingleRegion(
         const { data } = await worker.recognize(tempCanvas);
         const wordBoxes = data.words.map((w: any) => w.bbox);
 
-        // ANALYZE VERTICAL GAPS: Expand word boxes horizontally to bridge gaps inside words
         const xOccupancy = new Array(w).fill(false);
         wordBoxes.forEach((box: any) => {
-          // Add horizontal padding (25% of word height) to prevent cutting through characters
           const hPadding = (box.y1 - box.y0) * 0.25;
           const startX = Math.floor(box.x0 - hPadding);
           const endX = Math.ceil(box.x1 + hPadding);
-          for (let i = startX; i < endX; i++) {
-            if (i >= 0 && i < w) xOccupancy[i] = true;
-          }
+          for (let i = startX; i < endX; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
         });
         
-        // Find vertical gutters with a minimum width threshold (roughly 1% of region width)
-        const vGapThreshold = Math.max(2, Math.floor(w * 0.01));
+        const vGapThreshold = Math.max(2, Math.floor(w * 0.012));
         findGapsInOccupancy(xOccupancy, vGapThreshold).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
 
-        // ANALYZE HORIZONTAL GAPS: Cluster words into rows based on vertical overlap
         const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
         const rows: any[][] = [];
         if (sortedWords.length > 0) {
@@ -263,8 +253,7 @@ export async function detectLinesInSingleRegion(
             const prev = cluster[cluster.length - 1];
             const wordH = word.y1 - word.y0;
             const overlap = Math.min(word.y1, prev.y1) - Math.max(word.y0, prev.y0);
-            // If significant vertical overlap, group into the same row
-            if (overlap > wordH * 0.4) cluster.push(word);
+            if (overlap > wordH * 0.45) cluster.push(word);
             else { rows.push(cluster); cluster = [word]; }
           }
           rows.push(cluster);
@@ -273,14 +262,12 @@ export async function detectLinesInSingleRegion(
         for (let i = 0; i < rows.length - 1; i++) {
           const upper = Math.max(...rows[i].map(w => w.y1));
           const lower = Math.min(...rows[i+1].map(w => w.y0));
-          // Place grid line exactly in the middle of the gutter between rows
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // 3. Consolidation: Mix wired and wireless into one clean grid
-        // Using a 1.8% threshold to resolve clusters and prioritize physical boundaries.
-        let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.8);
-        let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
+        // 3. Consolidation
+        let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
+        let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.2);
 
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
@@ -310,26 +297,20 @@ function findGapsInOccupancy(occupancy: boolean[], minWidth: number): number[] {
       }
     }
   }
-  if (start !== -1) {
-    const width = occupancy.length - start;
-    if (width >= minWidth) gaps.push(start + width / 2);
-  }
   return gaps;
 }
 
 /**
- * Advanced image pre-processing for Tesseract OCR.
- * Focuses on creating high-contrast black text on pure white background.
+ * Pre-processing for Tesseract OCR.
  */
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
     const opts = options || { 
-      binarize: false, deskew: false, denoise: false, thresholdMethod: 'adaptive', thresholdValue: 128, 
+      binarize: false, deskew: false, denoise: false, thresholdMethod: 'global', thresholdValue: 128, 
       thresholdBlockSize: 31, thresholdC: 2, thresholdMaxValue: 255, adaptiveMethod: 'gaussian', thresholdType: 'binary'
     };
     let current = src.clone();
     
-    // Convert to Grayscale
     if (current.channels() > 1) {
       let gray = new cv.Mat();
       cv.cvtColor(current, gray, cv.COLOR_RGBA2GRAY, 0);
@@ -337,7 +318,6 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       current = gray;
     }
 
-    // Median blur to remove salt and pepper noise
     if (opts.denoise) {
       const blurred = new cv.Mat();
       cv.medianBlur(current, blurred, 3);
@@ -345,7 +325,6 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       current = blurred;
     }
 
-    // Enhanced Contrast / Adaptive Binarization
     if (opts.binarize) {
       const binary = new cv.Mat();
       const thresholdType = opts.thresholdType === 'binary_inv' ? cv.THRESH_BINARY_INV : cv.THRESH_BINARY;
@@ -354,25 +333,11 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       if (opts.thresholdMethod === 'global') {
         cv.threshold(current, binary, opts.thresholdValue, maxValue, thresholdType);
       } else {
-        // Force odd block size for adaptive threshold
         const blockSize = Math.max(3, opts.thresholdBlockSize % 2 === 0 ? opts.thresholdBlockSize + 1 : opts.thresholdBlockSize);
-        cv.adaptiveThreshold(
-          current, 
-          binary, 
-          maxValue, 
-          opts.adaptiveMethod === 'mean' ? cv.ADAPTIVE_THRESH_MEAN_C : cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
-          thresholdType, 
-          blockSize, 
-          opts.thresholdC
-        );
+        cv.adaptiveThreshold(current, binary, maxValue, opts.adaptiveMethod === 'mean' ? cv.ADAPTIVE_THRESH_MEAN_C : cv.ADAPTIVE_THRESH_GAUSSIAN_C, thresholdType, blockSize, opts.thresholdC);
       }
       current.delete(); 
       current = binary;
-
-      // Clean up the text strokes
-      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 1));
-      cv.morphologyEx(current, current, cv.MORPH_OPEN, kernel);
-      kernel.delete();
     }
 
     return current;
@@ -382,28 +347,11 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
   }
 }
 
-function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, height: number, options?: PreprocessingOptions) {
-  if (width <= 0 || height <= 0) return;
-  const imageData = ctx.getImageData(0, 0, width, height);
-  const data = imageData.data;
-  const method = options?.thresholdMethod || 'adaptive';
-  const threshVal = options?.thresholdValue || 128;
-  const inv = options?.thresholdType === 'binary_inv';
-
-  for (let i = 0; i < data.length; i += 4) {
-    const luminance = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    let val = method === 'global' ? (luminance > threshVal ? 255 : 0) : (luminance > 160 ? 255 : 0);
-    if (inv) val = 255 - val;
-    data[i] = data[i + 1] = data[i + 2] = val;
-  }
-  ctx.putImageData(imageData, 0, 0);
-}
-
-export async function getPreprocessedPreview(imageSrc: string, region: TableRegion, options: PreprocessingOptions): Promise<string> {
+export async function getPreprocessedPreview(imageSrc: string, region: TableRegion, options: PreprocessingOptions, language: string = 'eng+chi_tra'): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
-    img.onload = () => {
+    img.onload = async () => {
       const canvas = document.createElement('canvas');
       const x = (region.x / 100) * img.width;
       const y = (region.y / 100) * img.height;
@@ -411,6 +359,9 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
       const h = (region.height / 100) * img.height;
       if (w <= 0 || h <= 0) { resolve(imageSrc); return; }
       canvas.width = w; canvas.height = h;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(imageSrc); return; }
 
       if (window.cv && window.cv.imread) {
         try {
@@ -420,31 +371,41 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
           const tableY = Math.max(0, Math.floor(y));
           const tableW = Math.min(src.cols - tableX, Math.floor(w));
           const tableH = Math.min(src.rows - tableY, Math.floor(h));
+          
           if (tableW > 0 && tableH > 0) {
             const regionMat = src.roi(new cv.Rect(tableX, tableY, tableW, tableH));
             const processedMat = preprocessMatForOcr(cv, regionMat, options);
             cv.imshow(canvas, processedMat);
+            
+            // Visualization of detected text boxes
+            if (options.showTextBoxes) {
+              const worker = await createWorker(language);
+              const { data } = await worker.recognize(canvas);
+              ctx.strokeStyle = '#ef4444'; // Tailwind destructive/red-500
+              ctx.lineWidth = 1.5;
+              data.words.forEach((word: any) => {
+                ctx.strokeRect(word.bbox.x0, word.bbox.y0, word.bbox.x1 - word.bbox.x0, word.bbox.y1 - word.bbox.y0);
+              });
+              await worker.terminate();
+            }
+
             const dataUrl = canvas.toDataURL();
             src.delete(); regionMat.delete(); processedMat.delete();
             resolve(dataUrl); return;
           }
           src.delete();
-        } catch (e) {}
+        } catch (e) { console.error(e); }
       }
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
-        if (options.binarize) preprocessCanvasForOcr(ctx, w, h, options);
-        resolve(canvas.toDataURL());
-      } else resolve(imageSrc);
+      
+      ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+      resolve(canvas.toDataURL());
     };
     img.src = imageSrc;
   });
 }
 
 /**
- * Process extraction for a whole page of tables using Step 3's layout hints.
- * Optimized for Step 4 using a Single-Pass OCR strategy for Tesseract.
+ * Optimized Step 4 Extraction.
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -486,7 +447,6 @@ export async function processTablesOnPage(
       } catch (e) { fallbackToCanvas(img, region, tempCanvas, true, region.preprocessing); }
     } else fallbackToCanvas(img, region, tempCanvas, true, region.preprocessing);
 
-    // Finalized Grid Lines from Step 3
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const rowsCount = hCoords.length - 1;
@@ -496,26 +456,21 @@ export async function processTablesOnPage(
 
     if (isTesseract) {
       const { data } = await worker.recognize(tempCanvas);
-      
       data.words.forEach((word: any) => {
         const centerX = (word.bbox.x0 + word.bbox.x1) / 2;
         const centerY = (word.bbox.y0 + word.bbox.y1) / 2;
-        
         const xPct = (centerX / tempCanvas.width) * 100;
         const yPct = (centerY / tempCanvas.height) * 100;
-
         let colIdx = vCoords.findIndex((v, i) => i < vCoords.length - 1 && xPct >= v && xPct < vCoords[i + 1]);
         let rowIdx = hCoords.findIndex((h, i) => i < hCoords.length - 1 && yPct >= h && yPct < hCoords[i + 1]);
-
         if (colIdx !== -1 && rowIdx !== -1) {
           tableData[rowIdx][colIdx] = (tableData[rowIdx][colIdx] + " " + word.text).trim();
         }
       });
     } else {
-      const ctx = tempCanvas.getContext('2d');
       const cellCanvas = document.createElement('canvas');
       const cellCtx = cellCanvas.getContext('2d');
-      if (ctx && cellCtx) {
+      if (cellCtx) {
         for (let r = 0; r < rowsCount; r++) {
           for (let c = 0; c < colsCount; c++) {
             let x = (vCoords[c] / 100) * tempCanvas.width;
@@ -526,16 +481,8 @@ export async function processTablesOnPage(
               cellCanvas.width = w; cellCanvas.height = h;
               cellCtx.drawImage(tempCanvas, x, y, w, h, 0, 0, w, h);
               try {
-                tableData[r][c] = await callAiEngineAction(
-                  cellCanvas.toDataURL('image/jpeg'), 
-                  engineConfig.aiConfig.apiUrl, 
-                  engineConfig.aiConfig.apiKey, 
-                  engineConfig.aiConfig.model, 
-                  engineConfig.aiConfig.systemPrompt
-                );
-              } catch (err) { 
-                tableData[r][c] = "[AI ERROR]"; 
-              }
+                tableData[r][c] = await callAiEngineAction(cellCanvas.toDataURL('image/jpeg'), engineConfig.aiConfig.apiUrl, engineConfig.aiConfig.apiKey, engineConfig.aiConfig.model, engineConfig.aiConfig.systemPrompt);
+              } catch (err) { tableData[r][c] = "[AI ERROR]"; }
             }
           }
         }
@@ -558,5 +505,4 @@ function fallbackToCanvas(img: HTMLImageElement, region: TableRegion, canvas: HT
   const w = (region.width / 100) * img.width; const h = (region.height / 100) * img.height;
   canvas.width = w; canvas.height = h;
   ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
-  if (preprocess) preprocessCanvasForOcr(ctx, w, h, options);
 }
