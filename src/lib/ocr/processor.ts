@@ -113,7 +113,8 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 }
 
 /**
- * Detects grid lines within a single region using morphological operations.
+ * Detects grid lines within a single region using both morphological analysis (wired)
+ * and projection analysis (wireless/whitespace).
  */
 export async function detectLinesInSingleRegion(imageSrc: string, region: TableRegion): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
   return new Promise((resolve) => {
@@ -146,8 +147,10 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
+        // --- 1. Morphological Detection (Wired Lines) ---
         const vLines: TableLine[] = [];
-        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.floor(h / 20)));
+        const vKernelSize = Math.max(2, Math.floor(h / 30));
+        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, vKernelSize));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
         cv.dilate(vMat, vMat, vKernel);
@@ -157,16 +160,17 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
           for (let i = 0; i < vMat.rows; i++) {
             if (vMat.ucharAt(i, j) > 0) count++;
           }
-          if (count > h * 0.7) {
+          if (count > h * 0.6) {
             const pos = (j / vMat.cols) * 100;
-            if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 2) {
-              vLines.push({ id: Math.random().toString(36).substr(2, 9), type: 'vertical', position: pos });
+            if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 1.5) {
+              vLines.push({ id: `wired-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
             }
           }
         }
 
         const hLines: TableLine[] = [];
-        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.floor(w / 20), 1));
+        const hKernelSize = Math.max(2, Math.floor(w / 30));
+        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(hKernelSize, 1));
         const hMat = new cv.Mat();
         cv.erode(thresh, hMat, hKernel);
         cv.dilate(hMat, hMat, hKernel);
@@ -176,16 +180,56 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
           for (let j = 0; j < hMat.cols; j++) {
             if (hMat.ucharAt(i, j) > 0) count++;
           }
-          if (count > w * 0.7) {
+          if (count > w * 0.6) {
             const pos = (i / hMat.rows) * 100;
-            if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 2) {
-              hLines.push({ id: Math.random().toString(36).substr(2, 9), type: 'horizontal', position: pos });
+            if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 1.5) {
+              hLines.push({ id: `wired-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
             }
           }
         }
 
+        // --- 2. Projection Analysis (Wireless/Whitespace Detection) ---
+        // Vertical Projection (Columns)
+        const vProjection = new Array(thresh.cols).fill(0);
+        for (let j = 0; j < thresh.cols; j++) {
+          for (let i = 0; i < thresh.rows; i++) {
+            if (thresh.ucharAt(i, j) > 0) vProjection[j]++;
+          }
+        }
+
+        const vGaps = findGaps(vProjection, thresh.cols * 0.02, 0);
+        vGaps.forEach(gapCenter => {
+          const pos = (gapCenter / thresh.cols) * 100;
+          // Only add if not near an existing wired line
+          if (!vLines.some(l => Math.abs(l.position - pos) < 3)) {
+            vLines.push({ id: `wireless-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
+          }
+        });
+
+        // Horizontal Projection (Rows)
+        const hProjection = new Array(thresh.rows).fill(0);
+        for (let i = 0; i < thresh.rows; i++) {
+          for (let j = 0; j < thresh.cols; j++) {
+            if (thresh.ucharAt(i, j) > 0) hProjection[i]++;
+          }
+        }
+
+        const hGaps = findGaps(hProjection, thresh.rows * 0.015, 0);
+        hGaps.forEach(gapCenter => {
+          const pos = (gapCenter / thresh.rows) * 100;
+          // Only add if not near an existing wired line
+          if (!hLines.some(l => Math.abs(l.position - pos) < 3)) {
+            hLines.push({ id: `wireless-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
+          }
+        });
+
+        // Cleanup
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
+
+        // Sort lines before returning
+        vLines.sort((a, b) => a.position - b.position);
+        hLines.sort((a, b) => a.position - b.position);
 
         resolve({ vLines, hLines });
       } catch (err) {
@@ -196,6 +240,38 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
     img.onerror = () => resolve({ vLines: [], hLines: [] });
     img.src = imageSrc;
   });
+}
+
+/**
+ * Helper to find gaps (zero or low density) in a projection array.
+ */
+function findGaps(projection: number[], minWidth: number, threshold: number): number[] {
+  const gaps: number[] = [];
+  let gapStart = -1;
+  
+  for (let i = 0; i < projection.length; i++) {
+    if (projection[i] <= threshold) {
+      if (gapStart === -1) gapStart = i;
+    } else {
+      if (gapStart !== -1) {
+        const gapWidth = i - gapStart;
+        if (gapWidth >= minWidth) {
+          gaps.push(gapStart + gapWidth / 2);
+        }
+        gapStart = -1;
+      }
+    }
+  }
+  
+  // Handle gap at the end
+  if (gapStart !== -1) {
+    const gapWidth = projection.length - gapStart;
+    if (gapWidth >= minWidth) {
+      gaps.push(gapStart + gapWidth / 2);
+    }
+  }
+
+  return gaps;
 }
 
 /**
