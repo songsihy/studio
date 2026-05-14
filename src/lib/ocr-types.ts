@@ -1,7 +1,7 @@
 
 export type ProcessingStatus = 'idle' | 'uploading' | 'selecting-tables' | 'detecting' | 'refining' | 'ocr-processing' | 'completed' | 'error';
 
-export type OcrEngineType = 'tesseract' | 'ai';
+export type OcrEngineType = 'tesseract' | 'ai' | 'scribe';
 
 export interface AiEngineConfig {
   apiUrl: string;

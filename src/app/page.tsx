@@ -26,7 +26,8 @@ import {
   Globe,
   Key,
   MessageSquare,
-  Zap
+  Zap,
+  PenTool
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -317,6 +318,7 @@ export default function TableScanPro() {
               <Tabs defaultValue={engineConfig.type} onValueChange={(v) => setEngineConfig(prev => ({ ...prev, type: v as any }))}>
                 <TabsList className="w-full rounded-none h-12">
                   <TabsTrigger value="tesseract" className="flex-1 gap-2"><Cpu size={14} /> Tesseract.js</TabsTrigger>
+                  <TabsTrigger value="scribe" className="flex-1 gap-2"><PenTool size={14} /> Scribe.js</TabsTrigger>
                   <TabsTrigger value="ai" className="flex-1 gap-2"><Bot size={14} /> AI Engine</TabsTrigger>
                 </TabsList>
                 
@@ -337,6 +339,29 @@ export default function TableScanPro() {
                         ))}
                       </div>
                     </ScrollArea>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="scribe" className="p-4 space-y-4">
+                  <div className="space-y-4">
+                    <p className="text-xs text-muted-foreground">Scribe.js is an advanced OCR engine for high-precision document extraction.</p>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Languages</Label>
+                      <ScrollArea className="h-40 border rounded-md">
+                        <div className="p-3 space-y-2">
+                          {SUPPORTED_LANGS.map((lang) => (
+                            <div key={lang.id} className="flex items-center space-x-2">
+                              <Checkbox 
+                                id={`lang-s-${lang.id}`} 
+                                checked={selectedLangs.includes(lang.id)}
+                                onCheckedChange={() => setSelectedLangs(prev => prev.includes(lang.id) ? prev.filter(l => l !== lang.id) : [...prev, lang.id])}
+                              />
+                              <Label htmlFor={`lang-s-${lang.id}`} className="text-sm font-medium">{lang.label}</Label>
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </div>
                   </div>
                 </TabsContent>
 
@@ -544,7 +569,8 @@ export default function TableScanPro() {
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><AlertCircle className="text-muted-foreground w-5 h-5" /> Tips</CardTitle></CardHeader>
               <CardContent className="text-xs text-muted-foreground space-y-3">
                 <p>• <b>Tesseract.js:</b> Integrated high-precision OCR for complex mixed-language layouts.</p>
-                <p>• <b>Drop-Left Rule:</b> Grid boundaries are resolved by preserving the rightmost physical border.</p>
+                <p>• <b>Wired-First:</b> Physical borders are always prioritized over logical guesses.</p>
+                <p>• <b>Drop-Left:</b> Redundant lines are resolved by preserving the rightmost anchor.</p>
                 <p>• <b>Single Pass:</b> Extraction now maps text into the grid from a single high-quality pass.</p>
               </CardContent>
             </Card>

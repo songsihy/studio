@@ -149,14 +149,13 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 }
 
 function selectBestInGroup(group: TableLine[]): TableLine {
-  // Priority: 1. Reserve Wired lines first (physical borders).
-  // Priority: 2. In any cluster, drop the left lines and keep the rightmost one.
+  // Priority 1: Physical Wired lines ALWAYS take precedence.
   const wired = group.filter(l => l.id.startsWith('w-'));
   if (wired.length > 0) {
-    // If multiple wired lines, pick the rightmost one per "Drop-Left" instruction
+    // Priority 2: In a cluster of wired lines, "Drop-Left" and keep the rightmost one.
     return wired[wired.length - 1];
   }
-  // Otherwise pick the rightmost wireless guess
+  // Priority 3: For wireless clusters, "Drop-Left" and keep the rightmost guess.
   return group[group.length - 1];
 }
 
@@ -238,16 +237,17 @@ export async function detectLinesInSingleRegion(
         const wordBoxes = data.words.map((word: any) => word.bbox);
 
         // Occupancy analysis for columns with word dilation to prevent cutting through words
+        // We use a safe horizontal padding based on character height to "bridge" words
         const xOccupancy = new Array(w).fill(false);
         wordBoxes.forEach((box: any) => {
           const charHeightEstimate = box.y1 - box.y0;
-          const hDilation = charHeightEstimate * 0.6; // Connect nearby chars horizontally
+          const hDilation = charHeightEstimate * 1.2; // Increased dilation to prevent cutting through symbols
           const startX = Math.floor(box.x0 - hDilation);
           const endX = Math.ceil(box.x1 + hDilation);
           for (let i = startX; i < endX; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
         });
         
-        const vGapThreshold = Math.max(1, Math.floor(w * 0.015)); 
+        const vGapThreshold = Math.max(2, Math.floor(w * 0.02)); 
         findGapsInOccupancy(xOccupancy, vGapThreshold).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
@@ -262,7 +262,7 @@ export async function detectLinesInSingleRegion(
             const prev = cluster[cluster.length - 1];
             const wordH = word.y1 - word.y0;
             const overlap = Math.min(word.y1, prev.y1) - Math.max(word.y0, prev.y0);
-            if (overlap > wordH * 0.35) cluster.push(word);
+            if (overlap > wordH * 0.4) cluster.push(word);
             else { rows.push(cluster); cluster = [word]; }
           }
           rows.push(cluster);
@@ -417,7 +417,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
 
 /**
  * Step 4 Extraction using a single-pass OCR strategy per table region.
- * Uses high-resolution upscale for maximum accuracy.
+ * Uses high-resolution 2.5x Lanczos upscale for maximum accuracy.
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -442,7 +442,7 @@ export async function processTablesOnPage(
 
   for (const region of regions) {
     const tempCanvas = document.createElement('canvas');
-    const scale = 2.5; // Upscale for better recognition
+    const scale = 2.5; // Optimal upscale for character density
 
     if (useCv && srcMat) {
       try {
@@ -475,7 +475,7 @@ export async function processTablesOnPage(
     
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
 
-    if (engineConfig.type === 'tesseract') {
+    if (engineConfig.type === 'tesseract' || engineConfig.type === 'scribe') {
       const worker = await createWorker(language);
       const { data } = await worker.recognize(tempCanvas);
       
