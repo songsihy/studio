@@ -166,7 +166,16 @@ export const LineEditor: React.FC<LineEditorProps> = ({
 
   if (!imageSrc || !imgNaturalSize) return null;
   const cropAspect = (cropRect.width * imgNaturalSize.w) / (cropRect.height * imgNaturalSize.h);
-  const EngineIcon = engineType === 'tesseract' ? Cpu : Bot;
+  
+  const getEngineIcon = () => {
+    switch (engineType) {
+      case 'tesseract': return Cpu;
+      case 'scribe': return PenTool;
+      case 'ai': return Bot;
+      default: return Cpu;
+    }
+  };
+  const EngineIcon = getEngineIcon();
 
   return (
     <div className="space-y-4 border rounded-xl p-4 bg-muted/10 shadow-sm">
@@ -175,7 +184,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           <h3 className="font-bold text-sm text-primary uppercase tracking-tight">{title}</h3>
           <Badge variant="secondary" className="h-6 flex items-center gap-1.5 px-2 bg-primary/10 text-primary border-primary/20">
             <EngineIcon size={10} />
-            <span className="text-[10px] font-bold uppercase tracking-wider">{engineType.toUpperCase()}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider">{engineType.toUpperCase()} Engine</span>
           </Badge>
           <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1.5 bg-background shadow-sm" onClick={handleAutoGrid} disabled={isDetecting}>
             {isDetecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3 text-secondary" />}
@@ -203,7 +212,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
               <Sparkles size={12} className="text-secondary" /> Cleanup:
             </span>
-            <div className="flex gap-4">
+            <div className="flex gap-4 flex-wrap">
               <div className="flex items-center gap-2">
                 <Switch checked={preprocessing.binarize} onCheckedChange={(v) => onPreprocessingChange?.({...preprocessing, binarize: v})} className="scale-75" />
                 <Label className="text-[10px] font-medium">Binarize</Label>
@@ -219,7 +228,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             </div>
           </div>
 
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex gap-2 flex-wrap">
             <Button size="sm" variant={preprocessing.showTextBoxes ? "secondary" : "outline"} className="h-7 text-[10px] gap-1.5" onClick={() => onPreprocessingChange?.({...preprocessing, showTextBoxes: !preprocessing.showTextBoxes})}>
               <BoxSelect size={12} /> Blocks
             </Button>

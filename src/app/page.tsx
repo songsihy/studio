@@ -277,12 +277,15 @@ export default function TableScanPro() {
         <div className="flex items-center gap-4">
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="outline" className="h-10 gap-2 bg-card shadow-sm"><Settings size={18} /> Engine</Button>
+              <Button variant="outline" className="h-10 gap-2 bg-card shadow-sm">
+                <Settings size={18} /> Engine Settings
+              </Button>
             </PopoverTrigger>
             <PopoverContent className="w-[400px] p-0" align="end">
               <Tabs defaultValue={engineConfig.type} onValueChange={(v) => setEngineConfig(p => ({ ...p, type: v as any }))}>
                 <TabsList className="w-full h-12">
                   <TabsTrigger value="tesseract" className="flex-1 gap-2"><Cpu size={14} /> Tesseract</TabsTrigger>
+                  <TabsTrigger value="scribe" className="flex-1 gap-2"><PenTool size={14} /> Scribe</TabsTrigger>
                   <TabsTrigger value="ai" className="flex-1 gap-2"><Bot size={14} /> AI</TabsTrigger>
                 </TabsList>
                 <TabsContent value="tesseract" className="p-4 space-y-4">
@@ -292,6 +295,22 @@ export default function TableScanPro() {
                       <div key={lang.id} className="flex items-center space-x-2 mb-2">
                         <Checkbox id={lang.id} checked={selectedLangs.includes(lang.id)} onCheckedChange={() => setSelectedLangs(p => p.includes(lang.id) ? p.filter(l => l !== lang.id) : [...p, lang.id])} />
                         <Label htmlFor={lang.id} className="text-sm font-medium">{lang.label}</Label>
+                      </div>
+                    ))}
+                  </ScrollArea>
+                </TabsContent>
+                <TabsContent value="scribe" className="p-4 space-y-4">
+                  <div className="p-4 bg-muted/30 rounded-lg text-center space-y-2">
+                    <PenTool size={24} className="mx-auto text-primary" />
+                    <p className="text-xs font-medium">Scribe.js Engine</p>
+                    <p className="text-[10px] text-muted-foreground italic">Powerful local layout recognition optimized for multi-language tables.</p>
+                  </div>
+                  <Label className="text-xs font-bold uppercase text-muted-foreground">Languages</Label>
+                  <ScrollArea className="h-32 border rounded-md p-3">
+                    {SUPPORTED_LANGS.slice(0, 5).map(lang => (
+                      <div key={lang.id} className="flex items-center space-x-2 mb-2">
+                        <Checkbox id={`scribe-${lang.id}`} checked={selectedLangs.includes(lang.id)} onCheckedChange={() => setSelectedLangs(p => p.includes(lang.id) ? p.filter(l => l !== lang.id) : [...p, lang.id])} />
+                        <Label htmlFor={`scribe-${lang.id}`} className="text-sm font-medium">{lang.label}</Label>
                       </div>
                     ))}
                   </ScrollArea>

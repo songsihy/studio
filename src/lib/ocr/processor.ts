@@ -1,3 +1,4 @@
+
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -133,9 +134,8 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 
 function selectBestInGroup(group: TableLine[]): TableLine {
   const wired = group.filter(l => l.id.startsWith('w-'));
-  // Rule: Wired lines priority + Drop-Left (Rightmost is anchor)
-  // If we have wired lines, the rightmost wired line wins.
-  // Otherwise, the rightmost wireless line wins.
+  // Wired-First: Physical borders are reserved.
+  // Drop-Left: In any cluster, always keep the rightmost.
   if (wired.length > 0) return wired[wired.length - 1];
   return group[group.length - 1];
 }
@@ -376,7 +376,7 @@ export async function processTablesOnPage(
     const colsCount = vCoords.length - 1;
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
 
-    if (region.extractionStrategy === 'single-pass' || engineConfig.type === 'ai') {
+    if (region.extractionStrategy === 'single-pass' || engineConfig.type === 'ai' || engineConfig.type === 'scribe') {
       const regionCanvas = document.createElement('canvas');
       if (useCv && srcMat) {
         const tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
@@ -414,6 +414,7 @@ export async function processTablesOnPage(
           }
         }
       } else {
+        // Tesseract or Scribe (using high-res single pass)
         const worker = await createWorker(language);
         const { data } = await worker.recognize(regionCanvas);
         data.words.forEach((word: any) => {
@@ -431,7 +432,6 @@ export async function processTablesOnPage(
       for (let r = 0; r < rowsCount; r++) {
         for (let c = 0; c < colsCount; c++) {
           const cellCanvas = document.createElement('canvas');
-          // Apply 10% padding to cover all text in the cell as requested
           const padding = 0.1; 
           const xStart = Math.max(0, vCoords[c] - (vCoords[c+1] - vCoords[c]) * padding);
           const xEnd = Math.min(100, vCoords[c+1] + (vCoords[c+1] - vCoords[c]) * padding);
