@@ -383,7 +383,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
               variant={preprocessing.showTextBoxes ? "secondary" : "outline"} 
               className="h-7 text-[10px] gap-1.5"
               onClick={() => {
-                togglePreprocessing('showTextBoxes');
+                const newValue = !preprocessing.showTextBoxes;
+                updateOption('showTextBoxes', newValue);
                 setShowProcessedPreview(true);
               }}
             >
@@ -407,7 +408,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           <div className="flex gap-2 bg-card p-1 rounded-md border shadow-sm">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" variant={addMode === 'v' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'v' ? null : 'v')} className="h-8">
+                <Button size="sm" variant={activeLine?.type === 'v' || addMode === 'v' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'v' ? null : 'v')} className="h-8">
                   <Plus className="w-4 h-4 mr-1" /> Vertical
                 </Button>
               </TooltipTrigger>
@@ -424,7 +425,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             <div className="w-px bg-border mx-1" />
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" variant={addMode === 'h' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'h' ? null : 'h')} className="h-8">
+                <Button size="sm" variant={activeLine?.type === 'h' || addMode === 'h' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'h' ? null : 'h')} className="h-8">
                   <Plus className="w-4 h-4 mr-1" /> Horizontal
                 </Button>
               </TooltipTrigger>

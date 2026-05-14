@@ -25,7 +25,8 @@ import {
   Bot,
   Globe,
   Key,
-  MessageSquare
+  MessageSquare,
+  Zap
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -202,8 +203,8 @@ export default function TableScanPro() {
   };
 
   const runOCR = async () => {
-    if (engineConfig.type === 'tesseract' && selectedLangs.length === 0) {
-      toast({ variant: "destructive", title: "No Language Selected", description: "Please select a language for Tesseract." });
+    if (engineConfig.type !== 'ai' && selectedLangs.length === 0) {
+      toast({ variant: "destructive", title: "No Language Selected", description: "Please select a language for the OCR engine." });
       return;
     }
     if (engineConfig.type === 'ai' && (!engineConfig.aiConfig.apiKey || !engineConfig.aiConfig.apiUrl)) {
@@ -243,8 +244,8 @@ export default function TableScanPro() {
   };
 
   const goBack = () => {
-    if (status === 'selecting-tables') reset();
-    else if (status === 'refining') setStatus('selecting-tables');
+    if (status === 'selecting-tables' && reset()) return;
+    if (status === 'refining') setStatus('selecting-tables');
     else if (status === 'completed') setStatus('refining');
   };
 
@@ -281,6 +282,7 @@ export default function TableScanPro() {
     setStatus('idle');
     setCurrentPageIndex(0);
     autoDetectedPages.current.clear();
+    return true;
   };
 
   return (
@@ -311,7 +313,7 @@ export default function TableScanPro() {
                 <span className="text-sm font-medium">Engine Settings</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-96 p-0" align="end">
+            <PopoverContent className="w-[450px] p-0" align="end">
               <Tabs defaultValue={engineConfig.type} onValueChange={(v) => setEngineConfig(prev => ({ ...prev, type: v as any }))}>
                 <TabsList className="w-full rounded-none h-12">
                   <TabsTrigger value="tesseract" className="flex-1 gap-2"><Cpu size={14} /> Tesseract.js</TabsTrigger>
@@ -326,11 +328,11 @@ export default function TableScanPro() {
                         {SUPPORTED_LANGS.map((lang) => (
                           <div key={lang.id} className="flex items-center space-x-2">
                             <Checkbox 
-                              id={`lang-${lang.id}`} 
+                              id={`lang-t-${lang.id}`} 
                               checked={selectedLangs.includes(lang.id)}
                               onCheckedChange={() => setSelectedLangs(prev => prev.includes(lang.id) ? prev.filter(l => l !== lang.id) : [...prev, lang.id])}
                             />
-                            <Label htmlFor={`lang-${lang.id}`} className="text-sm font-medium">{lang.label}</Label>
+                            <Label htmlFor={`lang-t-${lang.id}`} className="text-sm font-medium">{lang.label}</Label>
                           </div>
                         ))}
                       </div>
@@ -452,8 +454,8 @@ export default function TableScanPro() {
                 <Card className="p-12 text-center space-y-6">
                   <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto" />
                   <div className="space-y-2">
-                    <h3 className="text-xl font-bold">{engineConfig.type === 'tesseract' ? 'Local OCR Processing' : 'AI-Powered Extraction'}</h3>
-                    <p className="text-muted-foreground">{engineConfig.type === 'tesseract' ? 'Extracting text locally with Tesseract.js' : `Using ${engineConfig.aiConfig.model} via custom API`}</p>
+                    <h3 className="text-xl font-bold">{engineConfig.type === 'ai' ? 'AI-Powered Extraction' : 'Text Extraction Engine'}</h3>
+                    <p className="text-muted-foreground">{engineConfig.type === 'ai' ? `Using ${engineConfig.aiConfig.model}` : `Processing with ${engineConfig.type.toUpperCase()}`}</p>
                   </div>
                   <Progress value={progress} className="h-2 max-w-md mx-auto" />
                   <p className="text-sm font-bold text-primary">{progress}% Complete</p>
@@ -503,7 +505,7 @@ export default function TableScanPro() {
                   {[
                     { id: 'selecting-tables', label: 'Identify Tables', desc: 'Mark table areas', step: 2 },
                     { id: 'refining', label: 'Refine Grids', desc: 'Fine-tune cleanup', step: 3 },
-                    { id: 'ocr-processing', label: 'Text Extraction', desc: engineConfig.type === 'tesseract' ? 'Local Engine' : 'AI Engine', step: 4 }
+                    { id: 'ocr-processing', label: 'Text Extraction', desc: engineConfig.type === 'ai' ? 'AI Engine' : 'Local OCR', step: 4 }
                   ].map((step) => {
                     const isPast = status === 'completed' || (step.id === 'selecting-tables' && (status === 'refining' || status === 'ocr-processing')) || (step.id === 'refining' && status === 'ocr-processing');
                     const isCurrent = status === step.id || (step.id === 'refining' && status === 'detecting');
@@ -541,8 +543,9 @@ export default function TableScanPro() {
             <Card className="border-none shadow-lg">
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><AlertCircle className="text-muted-foreground w-5 h-5" /> Tips</CardTitle></CardHeader>
               <CardContent className="text-xs text-muted-foreground space-y-3">
-                <p>• <b>AI OCR:</b> Use the settings at the top to configure your own OpenAI-style Vision API for higher precision on handwritten or blurry text.</p>
-                <p>• <b>Preview:</b> Always check "Preview Cleanup" to ensure text is high-contrast and straight.</p>
+                <p>• <b>Tesseract.js:</b> Integrated high-precision OCR for complex mixed-language layouts.</p>
+                <p>• <b>Drop-Left Rule:</b> Grid boundaries are resolved by preserving the rightmost physical border.</p>
+                <p>• <b>Single Pass:</b> Extraction now maps text into the grid from a single high-quality pass.</p>
               </CardContent>
             </Card>
           </div>

@@ -85,7 +85,8 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
           thresholdC: 2,
           thresholdMaxValue: 255,
           adaptiveMethod: 'gaussian',
-          thresholdType: 'binary'
+          thresholdType: 'binary',
+          showTextBoxes: false
         }
       };
       onRegionsChange([...regions, newRegion]);
