@@ -205,25 +205,26 @@ export async function detectLinesInSingleRegion(
           wordBoxes.forEach((box: any) => {
             for (let i = box.x0; i < box.x1; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
           });
-          const vGaps = findGapsInOccupancy(xOccupancy, w * 0.015); // Slightly more sensitive
+          const vGaps = findGapsInOccupancy(xOccupancy, w * 0.01); // High sensitivity
           vGaps.forEach(gapCenter => {
             const pos = (gapCenter / w) * 100;
-            if (pos > 1 && pos < 99 && !vLines.some(l => Math.abs(l.position - pos) < 3)) {
+            if (pos > 1 && pos < 99 && !vLines.some(l => Math.abs(l.position - pos) < 2)) {
               vLines.push({ id: `layout-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
             }
           });
 
-          // Horizontal Wireless (Rows) - IMPROVED SENSITIVITY
+          // Horizontal Wireless (Rows) - MAX SENSITIVITY
           const yOccupancy = new Array(h).fill(false);
           wordBoxes.forEach((box: any) => {
             for (let i = box.y0; i < box.y1; i++) if (i >= 0 && i < h) yOccupancy[i] = true;
           });
-          // Lowered gap threshold from 0.01 to 0.003 to pick up tight rows
-          const hGaps = findGapsInOccupancy(yOccupancy, Math.max(1, h * 0.003)); 
+          
+          // Ultra-aggressive gap detection: Look for even 1-pixel gutters
+          const hGaps = findGapsInOccupancy(yOccupancy, 1); 
           hGaps.forEach(gapCenter => {
             const pos = (gapCenter / h) * 100;
-            // Also reduced proximity filter from 2 to 1 to allow more frequent row lines
-            if (pos > 0.5 && pos < 99.5 && !hLines.some(l => Math.abs(l.position - pos) < 1)) {
+            // Very tight proximity filter to capture frequent rows
+            if (pos > 0.3 && pos < 99.7 && !hLines.some(l => Math.abs(l.position - pos) < 0.5)) {
               hLines.push({ id: `layout-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
             }
           });
