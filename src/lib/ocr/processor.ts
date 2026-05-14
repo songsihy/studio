@@ -231,22 +231,30 @@ export async function detectLinesInSingleRegion(
         // 2. Wireless Pass (Layout analysis via OCR word positions)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
-        // Ensure high quality grayscale for OCR layout pass
         cv.imshow(tempCanvas, gray);
         const worker = existingWorker || await createWorker(language);
         const { data } = await worker.recognize(tempCanvas);
         const wordBoxes = data.words.map((w: any) => w.bbox);
 
-        // Analyze vertical gaps between word boxes
+        // ANALYZE VERTICAL GAPS: Expand word boxes horizontally to bridge gaps inside words
         const xOccupancy = new Array(w).fill(false);
         wordBoxes.forEach((box: any) => {
-          for (let i = Math.floor(box.x0); i < Math.ceil(box.x1); i++) if (i >= 0 && i < w) xOccupancy[i] = true;
+          // Add horizontal padding (25% of word height) to prevent cutting through characters
+          const hPadding = (box.y1 - box.y0) * 0.25;
+          const startX = Math.floor(box.x0 - hPadding);
+          const endX = Math.ceil(box.x1 + hPadding);
+          for (let i = startX; i < endX; i++) {
+            if (i >= 0 && i < w) xOccupancy[i] = true;
+          }
         });
-        findGapsInOccupancy(xOccupancy, 1).forEach(gap => {
+        
+        // Find vertical gutters with a minimum width threshold (roughly 1% of region width)
+        const vGapThreshold = Math.max(2, Math.floor(w * 0.01));
+        findGapsInOccupancy(xOccupancy, vGapThreshold).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
 
-        // Analyze horizontal gaps between rows (clustering words into logical lines)
+        // ANALYZE HORIZONTAL GAPS: Cluster words into rows based on vertical overlap
         const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
         const rows: any[][] = [];
         if (sortedWords.length > 0) {
@@ -256,20 +264,23 @@ export async function detectLinesInSingleRegion(
             const prev = cluster[cluster.length - 1];
             const wordH = word.y1 - word.y0;
             const overlap = Math.min(word.y1, prev.y1) - Math.max(word.y0, prev.y0);
-            if (overlap > wordH * 0.3) cluster.push(word);
+            // If significant vertical overlap, group into the same row
+            if (overlap > wordH * 0.4) cluster.push(word);
             else { rows.push(cluster); cluster = [word]; }
           }
           rows.push(cluster);
         }
+        
         for (let i = 0; i < rows.length - 1; i++) {
           const upper = Math.max(...rows[i].map(w => w.y1));
           const lower = Math.min(...rows[i+1].map(w => w.y0));
+          // Place grid line exactly in the middle of the gutter between rows
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
         // 3. Consolidation: Mix wired and wireless into one clean grid
-        // Dropping left redundant lines and reserving physical lines.
-        let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
+        // Using a 1.8% threshold to resolve clusters and prioritize physical boundaries.
+        let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.8);
         let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
 
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
@@ -470,7 +481,6 @@ export async function processTablesOnPage(
         let tableW = Math.min(srcMat.cols - tableX, Math.floor((region.width / 100) * srcMat.cols));
         let tableH = Math.min(srcMat.rows - tableY, Math.floor((region.height / 100) * srcMat.rows));
         const regionMat = srcMat.roi(new cv.Rect(tableX, tableY, tableW, tableH));
-        // Use optimal preprocessing for Tesseract
         const processedRegionMat = preprocessMatForOcr(cv, regionMat, region.preprocessing);
         cv.imshow(tempCanvas, processedRegionMat);
         regionMat.delete(); processedRegionMat.delete();
@@ -486,30 +496,23 @@ export async function processTablesOnPage(
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
 
     if (isTesseract) {
-      // SINGLE-PASS OCR: Perform one pass on the whole region
-      // and bin detected word bounding boxes into cells.
       const { data } = await worker.recognize(tempCanvas);
       
       data.words.forEach((word: any) => {
-        // Use center of the word bbox to decide cell placement
         const centerX = (word.bbox.x0 + word.bbox.x1) / 2;
         const centerY = (word.bbox.y0 + word.bbox.y1) / 2;
         
-        // Convert to percentage relative to tempCanvas
         const xPct = (centerX / tempCanvas.width) * 100;
         const yPct = (centerY / tempCanvas.height) * 100;
 
-        // Find matching cell
         let colIdx = vCoords.findIndex((v, i) => i < vCoords.length - 1 && xPct >= v && xPct < vCoords[i + 1]);
         let rowIdx = hCoords.findIndex((h, i) => i < hCoords.length - 1 && yPct >= h && yPct < hCoords[i + 1]);
 
         if (colIdx !== -1 && rowIdx !== -1) {
-          // Append text to cell data
           tableData[rowIdx][colIdx] = (tableData[rowIdx][colIdx] + " " + word.text).trim();
         }
       });
     } else {
-      // AI Engine Strategy (Per-cell for maximum instruction precision)
       const ctx = tempCanvas.getContext('2d');
       const cellCanvas = document.createElement('canvas');
       const cellCtx = cellCanvas.getContext('2d');
@@ -524,7 +527,6 @@ export async function processTablesOnPage(
               cellCanvas.width = w; cellCanvas.height = h;
               cellCtx.drawImage(tempCanvas, x, y, w, h, 0, 0, w, h);
               try {
-                // Pass high-quality JPEG for AI Vision
                 tableData[r][c] = await callAiEngineAction(
                   cellCanvas.toDataURL('image/jpeg'), 
                   engineConfig.aiConfig.apiUrl, 
