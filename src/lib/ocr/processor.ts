@@ -120,7 +120,7 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 
 /**
  * Consolidates clustered lines into a single logical line.
- * Rule: "Reserve the wired line first" & "Drop the left lines".
+ * Rule: "Reserve the wired line first" & "Drop-Left".
  */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
@@ -237,11 +237,10 @@ export async function detectLinesInSingleRegion(
         const wordBoxes = data.words.map((word: any) => word.bbox);
 
         // Occupancy analysis for columns with word dilation to prevent cutting through words
-        // We use a safe horizontal padding based on character height to "bridge" words
         const xOccupancy = new Array(w).fill(false);
         wordBoxes.forEach((box: any) => {
           const charHeightEstimate = box.y1 - box.y0;
-          const hDilation = charHeightEstimate * 1.2; // Increased dilation to prevent cutting through symbols
+          const hDilation = charHeightEstimate * 1.5; // Increased dilation to bridge characters
           const startX = Math.floor(box.x0 - hDilation);
           const endX = Math.ceil(box.x1 + hDilation);
           for (let i = startX; i < endX; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
@@ -312,7 +311,6 @@ function findGapsInOccupancy(occupancy: boolean[], minWidth: number): number[] {
 
 /**
  * Pre-processing for OCR engines.
- * Goal: Pure black text on white background.
  */
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
@@ -388,7 +386,6 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
             const processedMat = preprocessMatForOcr(cv, regionMat, options);
             cv.imshow(canvas, processedMat);
             
-            // Visualization of detected text boxes if requested
             if (options.showTextBoxes) {
               const worker = await createWorker(language);
               const { data } = await worker.recognize(canvas);
@@ -417,7 +414,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
 
 /**
  * Step 4 Extraction using a single-pass OCR strategy per table region.
- * Uses high-resolution 2.5x Lanczos upscale for maximum accuracy.
+ * Uses 2.5x Lanczos upscale for maximum accuracy.
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -442,7 +439,7 @@ export async function processTablesOnPage(
 
   for (const region of regions) {
     const tempCanvas = document.createElement('canvas');
-    const scale = 2.5; // Optimal upscale for character density
+    const scale = 2.5; 
 
     if (useCv && srcMat) {
       try {
@@ -479,7 +476,6 @@ export async function processTablesOnPage(
       const worker = await createWorker(language);
       const { data } = await worker.recognize(tempCanvas);
       
-      // Map detected words into grid cells
       data.words.forEach((word: any) => {
         const centerX = (word.bbox.x0 + word.bbox.x1) / 2;
         const centerY = (word.bbox.y0 + word.bbox.y1) / 2;

@@ -239,11 +239,11 @@ export const LineEditor: React.FC<LineEditorProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 bg-card p-1.5 rounded-lg border shadow-sm max-w-full overflow-hidden">
-          <div className="flex items-center gap-3 px-2 border-r pr-4">
+          <div className="flex flex-wrap items-center gap-3 px-2 md:border-r md:pr-4">
             <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1 shrink-0">
               <Sparkles size={12} className="text-secondary" /> OCR Cleanup:
             </span>
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-4">
               <div className="flex items-center gap-2">
                 <Switch 
                   id={`binarize-${cropRect.id}`} 
