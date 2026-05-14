@@ -190,32 +190,7 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
 
         // --- 2. Directional Smearing & Projection Analysis (Wireless Detection) ---
         
-        // Vertical Projection (Finding Columns) - Smear HORIZONTALLY to close gaps between chars
-        const vSmeared = new cv.Mat();
-        const vSmearKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(7, 2));
-        cv.dilate(thresh, vSmeared, vSmearKernel);
-
-        const vProjection = new Array(vSmeared.cols).fill(0);
-        for (let j = 0; j < vSmeared.cols; j++) {
-          for (let i = 0; i < vSmeared.rows; i++) {
-            if (vSmeared.ucharAt(i, j) > 0) vProjection[j]++;
-          }
-        }
-
-        const smoothedV = smoothArray(vProjection, 3);
-        const vGapThreshold = vSmeared.rows * 0.02; // Very sensitive: 2% ink density
-        const vMinWidth = Math.max(1, vSmeared.cols * 0.005); 
-        
-        const vGaps = findGaps(smoothedV, vMinWidth, vGapThreshold);
-        vGaps.forEach(gapCenter => {
-          const pos = (gapCenter / vSmeared.cols) * 100;
-          // Don't add if too close to an existing line
-          if (!vLines.some(l => Math.abs(l.position - pos) < 3)) {
-            vLines.push({ id: `wireless-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
-          }
-        });
-
-        // Horizontal Projection (Finding Rows) - Smear VERTICALLY to close vertical gaps
+        // 2a. Horizontal Projection (Finding Rows) - Smear VERTICALLY to close vertical gaps
         const hSmeared = new cv.Mat();
         const hSmearKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(2, 5));
         cv.dilate(thresh, hSmeared, hSmearKernel);
@@ -236,6 +211,42 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
           const pos = (gapCenter / hSmeared.rows) * 100;
           if (!hLines.some(l => Math.abs(l.position - pos) < 3)) {
             hLines.push({ id: `wireless-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
+          }
+        });
+
+        // Heuristic: Estimate "Font Height" to scale column smearing
+        let avgRowHeight = 10;
+        if (hLines.length > 1) {
+          const gaps = [];
+          for (let i = 1; i < hLines.length; i++) gaps.push(hLines[i].position - hLines[i-1].position);
+          avgRowHeight = (gaps.reduce((a, b) => a + b, 0) / gaps.length) * (h / 100);
+        }
+
+        // 2b. Vertical Projection (Finding Columns)
+        // Smear HORIZONTALLY more aggressively based on estimated font scale to bridge chars/words
+        const vSmeared = new cv.Mat();
+        const smearWidth = Math.max(5, Math.floor(avgRowHeight * 0.8)); // Use row height as a guide for word spacing
+        const vSmearKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(smearWidth, 2));
+        cv.dilate(thresh, vSmeared, vSmearKernel);
+
+        const vProjection = new Array(vSmeared.cols).fill(0);
+        for (let j = 0; j < vSmeared.cols; j++) {
+          for (let i = 0; i < vSmeared.rows; i++) {
+            if (vSmeared.ucharAt(i, j) > 0) vProjection[j]++;
+          }
+        }
+
+        const smoothedV = smoothArray(vProjection, 5);
+        // Ultra-sensitive threshold for columns (1% ink density)
+        const vGapThreshold = vSmeared.rows * 0.01; 
+        const vMinWidth = Math.max(2, vSmeared.cols * 0.005); 
+        
+        const vGaps = findGaps(smoothedV, vMinWidth, vGapThreshold);
+        vGaps.forEach(gapCenter => {
+          const pos = (gapCenter / vSmeared.cols) * 100;
+          // Don't add if too close to an existing line or at the very edges
+          if (pos > 2 && pos < 98 && !vLines.some(l => Math.abs(l.position - pos) < 4)) {
+            vLines.push({ id: `wireless-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
           }
         });
 
