@@ -149,7 +149,8 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
 
         // --- 1. Morphological Detection (Wired Lines) ---
         const vLines: TableLine[] = [];
-        const vKernelSize = Math.max(2, Math.floor(h / 30));
+        // Increased sensitivity by reducing kernel size slightly
+        const vKernelSize = Math.max(2, Math.floor(h / 40)); 
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, vKernelSize));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
@@ -160,16 +161,16 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
           for (let i = 0; i < vMat.rows; i++) {
             if (vMat.ucharAt(i, j) > 0) count++;
           }
-          if (count > h * 0.6) {
+          if (count > h * 0.5) { // Lowered threshold to pick up more faint lines
             const pos = (j / vMat.cols) * 100;
-            if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 1.5) {
+            if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 1.0) {
               vLines.push({ id: `wired-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
             }
           }
         }
 
         const hLines: TableLine[] = [];
-        const hKernelSize = Math.max(2, Math.floor(w / 30));
+        const hKernelSize = Math.max(2, Math.floor(w / 40));
         const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(hKernelSize, 1));
         const hMat = new cv.Mat();
         cv.erode(thresh, hMat, hKernel);
@@ -180,45 +181,57 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
           for (let j = 0; j < hMat.cols; j++) {
             if (hMat.ucharAt(i, j) > 0) count++;
           }
-          if (count > w * 0.6) {
+          if (count > w * 0.5) {
             const pos = (i / hMat.rows) * 100;
-            if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 1.5) {
+            if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 1.0) {
               hLines.push({ id: `wired-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
             }
           }
         }
 
         // --- 2. Projection Analysis (Wireless/Whitespace Detection) ---
+        // We use a smeared version of the image to close small gaps between characters
+        const smeared = new cv.Mat();
+        const smearKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+        cv.dilate(thresh, smeared, smearKernel);
+
         // Vertical Projection (Columns)
-        const vProjection = new Array(thresh.cols).fill(0);
-        for (let j = 0; j < thresh.cols; j++) {
-          for (let i = 0; i < thresh.rows; i++) {
-            if (thresh.ucharAt(i, j) > 0) vProjection[j]++;
+        const vProjection = new Array(smeared.cols).fill(0);
+        for (let j = 0; j < smeared.cols; j++) {
+          for (let i = 0; i < smeared.rows; i++) {
+            if (smeared.ucharAt(i, j) > 0) vProjection[j]++;
           }
         }
 
-        const vGaps = findGaps(vProjection, thresh.cols * 0.02, 0);
+        // Apply basic smoothing to projection to ignore noise
+        const smoothedV = smoothArray(vProjection, 3);
+        const vGapThreshold = smeared.rows * 0.05; // 5% ink density is considered a gap
+        const vMinWidth = smeared.cols * 0.02;     // Min 2% width for a column gutter
+        
+        const vGaps = findGaps(smoothedV, vMinWidth, vGapThreshold);
         vGaps.forEach(gapCenter => {
-          const pos = (gapCenter / thresh.cols) * 100;
-          // Only add if not near an existing wired line
-          if (!vLines.some(l => Math.abs(l.position - pos) < 3)) {
+          const pos = (gapCenter / smeared.cols) * 100;
+          if (!vLines.some(l => Math.abs(l.position - pos) < 4)) {
             vLines.push({ id: `wireless-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
           }
         });
 
         // Horizontal Projection (Rows)
-        const hProjection = new Array(thresh.rows).fill(0);
-        for (let i = 0; i < thresh.rows; i++) {
-          for (let j = 0; j < thresh.cols; j++) {
-            if (thresh.ucharAt(i, j) > 0) hProjection[i]++;
+        const hProjection = new Array(smeared.rows).fill(0);
+        for (let i = 0; i < smeared.rows; i++) {
+          for (let j = 0; j < smeared.cols; j++) {
+            if (smeared.ucharAt(i, j) > 0) hProjection[i]++;
           }
         }
 
-        const hGaps = findGaps(hProjection, thresh.rows * 0.015, 0);
+        const smoothedH = smoothArray(hProjection, 3);
+        const hGapThreshold = smeared.cols * 0.03; 
+        const hMinWidth = smeared.rows * 0.01;     
+        
+        const hGaps = findGaps(smoothedH, hMinWidth, hGapThreshold);
         hGaps.forEach(gapCenter => {
-          const pos = (gapCenter / thresh.rows) * 100;
-          // Only add if not near an existing wired line
-          if (!hLines.some(l => Math.abs(l.position - pos) < 3)) {
+          const pos = (gapCenter / smeared.rows) * 100;
+          if (!hLines.some(l => Math.abs(l.position - pos) < 4)) {
             hLines.push({ id: `wireless-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
           }
         });
@@ -226,8 +239,8 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         // Cleanup
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
+        smeared.delete(); smearKernel.delete();
 
-        // Sort lines before returning
         vLines.sort((a, b) => a.position - b.position);
         hLines.sort((a, b) => a.position - b.position);
 
@@ -240,6 +253,26 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
     img.onerror = () => resolve({ vLines: [], hLines: [] });
     img.src = imageSrc;
   });
+}
+
+/**
+ * Smoothing helper for projection arrays
+ */
+function smoothArray(data: number[], windowSize: number): number[] {
+  const result = [];
+  const halfWindow = Math.floor(windowSize / 2);
+  for (let i = 0; i < data.length; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = i - halfWindow; j <= i + halfWindow; j++) {
+      if (j >= 0 && j < data.length) {
+        sum += data[j];
+        count++;
+      }
+    }
+    result.push(sum / count);
+  }
+  return result;
 }
 
 /**
@@ -256,6 +289,7 @@ function findGaps(projection: number[], minWidth: number, threshold: number): nu
       if (gapStart !== -1) {
         const gapWidth = i - gapStart;
         if (gapWidth >= minWidth) {
+          // Add a line at the center of the whitespace gap
           gaps.push(gapStart + gapWidth / 2);
         }
         gapStart = -1;
@@ -263,7 +297,6 @@ function findGaps(projection: number[], minWidth: number, threshold: number): nu
     }
   }
   
-  // Handle gap at the end
   if (gapStart !== -1) {
     const gapWidth = projection.length - gapStart;
     if (gapWidth >= minWidth) {
