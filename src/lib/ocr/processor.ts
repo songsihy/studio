@@ -88,9 +88,6 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
   });
 }
 
-/**
- * Batch detect lines for all regions on a page.
- */
 export async function detectLinesInRegions(
   imageSrc: string, 
   regions: TableRegion[], 
@@ -112,6 +109,10 @@ export async function detectLinesInRegions(
   return results;
 }
 
+/**
+ * Drop-Left cluster resolution. 
+ * Groups lines within threshold and preserves the rightmost line.
+ */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
   const sorted = [...lines].sort((a, b) => a.position - b.position);
@@ -124,20 +125,19 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
     if (line.position - lastInGroup.position < threshold) {
       currentGroup.push(line);
     } else {
-      merged.push(selectBestInGroup(currentGroup));
+      merged.push(selectRightmostInGroup(currentGroup));
       currentGroup = [line];
     }
   }
-  merged.push(selectBestInGroup(currentGroup));
+  merged.push(selectRightmostInGroup(currentGroup));
   return merged;
 }
 
-function selectBestInGroup(group: TableLine[]): TableLine {
+function selectRightmostInGroup(group: TableLine[]): TableLine {
+  // Wired-First: If a group contains a wired line, prefer it, but still apply drop-left within wired lines
   const wired = group.filter(l => l.id.startsWith('w-'));
-  // Wired-First: Physical borders are reserved.
-  // Drop-Left: In any cluster, always keep the rightmost.
-  if (wired.length > 0) return wired[wired.length - 1];
-  return group[group.length - 1];
+  if (wired.length > 0) return wired[wired.length - 1]; // Rightmost wired
+  return group[group.length - 1]; // Rightmost wireless
 }
 
 export async function detectLinesInSingleRegion(
@@ -180,6 +180,7 @@ export async function detectLinesInSingleRegion(
         let wirelessV: TableLine[] = [];
         let wirelessH: TableLine[] = [];
 
+        // Wired morphology
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 30))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
@@ -200,6 +201,7 @@ export async function detectLinesInSingleRegion(
           if (count > w * 0.35) wiredH.push({ id: `w-h-${i}`, type: 'horizontal', position: (i / hMat.rows) * 100 });
         }
 
+        // Wireless layout analysis (uses Tesseract locally for Step 3)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
@@ -222,7 +224,7 @@ export async function detectLinesInSingleRegion(
         });
 
         const sortedWords = [...data.words].map(w => w.bbox).sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
-        const rows: any[][] = [];
+        const rowClusters: any[][] = [];
         if (sortedWords.length > 0) {
           let cluster = [sortedWords[0]];
           for (let i = 1; i < sortedWords.length; i++) {
@@ -230,17 +232,18 @@ export async function detectLinesInSingleRegion(
             const prev = cluster[cluster.length - 1];
             const overlap = Math.min(word.y1, prev.y1) - Math.max(word.y0, prev.y0);
             if (overlap > (word.y1 - word.y0) * 0.4) cluster.push(word);
-            else { rows.push(cluster); cluster = [word]; }
+            else { rowClusters.push(cluster); cluster = [word]; }
           }
-          rows.push(cluster);
+          rowClusters.push(cluster);
         }
         
-        for (let i = 0; i < rows.length - 1; i++) {
-          const upper = Math.max(...rows[i].map(w => w.y1));
-          const lower = Math.min(...rows[i+1].map(w => w.y0));
+        for (let i = 0; i < rowClusters.length - 1; i++) {
+          const upper = Math.max(...rowClusters[i].map(w => w.y1));
+          const lower = Math.min(...rowClusters[i+1].map(w => w.y0));
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
+        // Apply Drop-Left merging logic
         let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
         let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
 
@@ -366,7 +369,7 @@ export async function processTablesOnPage(
 
   const allResults: ExtractedTable[] = [];
   const totalRegions = regions.length;
-  let processedRegions = 0;
+  let processedRegionsCount = 0;
 
   for (const region of regions) {
     const scale = 2.5; 
@@ -376,7 +379,8 @@ export async function processTablesOnPage(
     const colsCount = vCoords.length - 1;
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
 
-    if (region.extractionStrategy === 'single-pass' || engineConfig.type === 'ai' || engineConfig.type === 'scribe') {
+    // Strategy Choice logic
+    if (region.extractionStrategy === 'single-pass' || engineConfig.type === 'ai') {
       const regionCanvas = document.createElement('canvas');
       if (useCv && srcMat) {
         const tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
@@ -414,7 +418,7 @@ export async function processTablesOnPage(
           }
         }
       } else {
-        // Tesseract or Scribe (using high-res single pass)
+        // Tesseract Single Pass
         const worker = await createWorker(language);
         const { data } = await worker.recognize(regionCanvas);
         data.words.forEach((word: any) => {
@@ -427,12 +431,12 @@ export async function processTablesOnPage(
         await worker.terminate();
       }
     } else {
-      // Cell-by-Cell strategy (Local OCR only)
+      // Cell-by-Cell Strategy with 10% Padding
       const worker = await createWorker(language);
       for (let r = 0; r < rowsCount; r++) {
         for (let c = 0; c < colsCount; c++) {
           const cellCanvas = document.createElement('canvas');
-          const padding = 0.1; 
+          const padding = 0.1; // 10% padding to avoid clipping
           const xStart = Math.max(0, vCoords[c] - (vCoords[c+1] - vCoords[c]) * padding);
           const xEnd = Math.min(100, vCoords[c+1] + (vCoords[c+1] - vCoords[c]) * padding);
           const yStart = Math.max(0, hCoords[r] - (hCoords[r+1] - hCoords[r]) * padding);
@@ -475,8 +479,8 @@ export async function processTablesOnPage(
     }
 
     allResults.push({ id: region.id, tableName: region.name, headers: tableData[0] || [], rows: tableData });
-    processedRegions++;
-    if (onProgress) onProgress(processedRegions / totalRegions);
+    processedRegionsCount++;
+    if (onProgress) onProgress(processedRegionsCount / totalRegions);
   }
 
   if (srcMat) srcMat.delete();
