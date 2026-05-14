@@ -2,9 +2,9 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { TableLine, TableRegion, PreprocessingOptions, OcrEngineType } from '@/lib/ocr-types';
+import { TableLine, TableRegion, PreprocessingOptions, OcrEngineType, ExtractionStrategy } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, Settings2, BoxSelect, Cpu, Bot, PenTool } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, Settings2, BoxSelect, Cpu, Bot, PenTool, Layers, Grid } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -28,6 +28,7 @@ interface LineEditorProps {
   hLines: TableLine[];
   onLinesChange: (vLines: TableLine[], hLines: TableLine[]) => void;
   onPreprocessingChange?: (options: PreprocessingOptions) => void;
+  onStrategyChange?: (strategy: ExtractionStrategy) => void;
   title: string;
   language?: string;
   engineType?: OcrEngineType;
@@ -40,6 +41,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   hLines, 
   onLinesChange,
   onPreprocessingChange,
+  onStrategyChange,
   title,
   language = 'eng+chi_tra',
   engineType = 'tesseract'
@@ -54,29 +56,14 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const { toast } = useToast();
 
-  const preprocessing = cropRect.preprocessing || { 
-    binarize: false, 
-    deskew: false, 
-    denoise: false,
-    thresholdMethod: 'global',
-    thresholdValue: 128,
-    thresholdBlockSize: 31,
-    thresholdC: 2,
-    thresholdMaxValue: 255,
-    adaptiveMethod: 'gaussian',
-    thresholdType: 'binary',
-    showTextBoxes: false
-  };
+  const preprocessing = cropRect.preprocessing;
+  const strategy = cropRect.extractionStrategy || 'single-pass';
 
   useEffect(() => {
     if (imageSrc) {
       const img = new Image();
-      const handleLoad = () => {
-        setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
-      };
-      img.onload = handleLoad;
+      img.onload = () => setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
       img.src = imageSrc;
-      if (img.complete) handleLoad();
     }
   }, [imageSrc]);
 
@@ -95,7 +82,6 @@ export const LineEditor: React.FC<LineEditorProps> = ({
       const uri = await getPreprocessedPreview(imageSrc, cropRect, preprocessing, language);
       setProcessedImageUri(uri);
     } catch (e) {
-      console.error(e);
     } finally {
       setIsPreviewLoading(false);
     }
@@ -136,17 +122,9 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     try {
       const { vLines: newV, hLines: newH } = await detectLinesInSingleRegion(imageSrc, cropRect, language);
       onLinesChange(newV, newH);
-      toast({
-        title: "Grid Detected",
-        description: `Automatically found ${newV.length} columns and ${newH.length} rows.`,
-      });
+      toast({ title: "Grid Detected", description: `Found ${newV.length} columns and ${newH.length} rows.` });
     } catch (err) {
-      console.error(err);
-      toast({
-        variant: "destructive",
-        title: "Detection Failed",
-        description: "Could not automatically identify grid lines for this table."
-      });
+      toast({ variant: "destructive", title: "Detection Failed" });
     } finally {
       setIsDetecting(false);
     }
@@ -155,14 +133,13 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   const handleContainerClick = (e: React.MouseEvent) => {
     if (!addMode || !containerRef.current) return;
     if ((e.target as HTMLElement).closest('button')) return;
-
     const rect = containerRef.current.getBoundingClientRect();
     if (addMode === 'v') {
-      const position = ((e.clientX - rect.left) / rect.width) * 100;
-      addLine('vertical', Math.max(0, Math.min(100, position)));
+      const pos = ((e.clientX - rect.left) / rect.width) * 100;
+      addLine('vertical', Math.max(0, Math.min(100, pos)));
     } else {
-      const position = ((e.clientY - rect.top) / rect.height) * 100;
-      addLine('horizontal', Math.max(0, Math.min(100, position)));
+      const pos = ((e.clientY - rect.top) / rect.height) * 100;
+      addLine('horizontal', Math.max(0, Math.min(100, pos)));
     }
     setAddMode(null);
   };
@@ -175,375 +152,123 @@ export const LineEditor: React.FC<LineEditorProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!activeLine || !containerRef.current) return;
-
     const rect = containerRef.current.getBoundingClientRect();
-    let position = 0;
-
     if (activeLine.type === 'v') {
-      position = ((e.clientX - rect.left) / rect.width) * 100;
-      position = Math.max(0, Math.min(100, position));
-      const updatedLines = vLines.map(l => l.id === activeLine.id ? { ...l, position } : l);
-      onLinesChange(updatedLines, hLines);
+      const pos = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      onLinesChange(vLines.map(l => l.id === activeLine.id ? { ...l, position: pos } : l), hLines);
     } else {
-      position = ((e.clientY - rect.top) / rect.height) * 100;
-      position = Math.max(0, Math.min(100, position));
-      const updatedLines = hLines.map(l => l.id === activeLine.id ? { ...l, position } : l);
-      onLinesChange(vLines, updatedLines);
+      const pos = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+      onLinesChange(vLines, hLines.map(l => l.id === activeLine.id ? { ...l, position: pos } : l));
     }
   };
 
-  const handleMouseUp = () => {
-    setActiveLine(null);
-  };
-
-  const togglePreprocessing = (key: keyof PreprocessingOptions) => {
-    if (!onPreprocessingChange) return;
-    const newOpts = { ...preprocessing, [key]: !preprocessing[key] };
-    onPreprocessingChange(newOpts);
-  };
-
-  const updateOption = <K extends keyof PreprocessingOptions>(key: K, val: PreprocessingOptions[K]) => {
-    if (!onPreprocessingChange) return;
-    const newOpts = { ...preprocessing, [key]: val };
-    onPreprocessingChange(newOpts);
-  };
+  const handleMouseUp = () => setActiveLine(null);
 
   if (!imageSrc || !imgNaturalSize) return null;
-
   const cropAspect = (cropRect.width * imgNaturalSize.w) / (cropRect.height * imgNaturalSize.h);
-
-  const EngineIcon = engineType === 'tesseract' ? Cpu : engineType === 'scribe' ? PenTool : Bot;
-  const engineLabel = engineType === 'tesseract' ? 'Tesseract' : engineType === 'scribe' ? 'Scribe' : 'AI Engine';
+  const EngineIcon = engineType === 'tesseract' ? Cpu : Bot;
 
   return (
     <div className="space-y-4 border rounded-xl p-4 bg-muted/10 shadow-sm">
       <div className="flex flex-wrap justify-between items-center gap-4">
         <div className="flex items-center gap-3">
           <h3 className="font-bold text-sm text-primary uppercase tracking-tight">{title}</h3>
-          
-          <Badge variant="secondary" className="h-6 flex items-center gap-1.5 px-2 bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 transition-colors">
+          <Badge variant="secondary" className="h-6 flex items-center gap-1.5 px-2 bg-primary/10 text-primary border-primary/20">
             <EngineIcon size={10} />
-            <span className="text-[10px] font-bold uppercase tracking-wider">{engineLabel}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider">{engineType.toUpperCase()}</span>
           </Badge>
-
-          <Button 
-            size="sm" 
-            variant="outline" 
-            className="h-7 text-[10px] gap-1.5 bg-background shadow-sm hover:bg-secondary/10"
-            onClick={handleAutoGrid}
-            disabled={isDetecting}
-          >
+          <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1.5 bg-background shadow-sm" onClick={handleAutoGrid} disabled={isDetecting}>
             {isDetecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3 text-secondary" />}
             Auto-Grid
           </Button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 bg-card p-1.5 rounded-lg border shadow-sm max-w-full overflow-hidden">
-          <div className="flex flex-wrap items-center gap-3 px-2 md:border-r md:pr-4">
-            <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1 shrink-0">
-              <Sparkles size={12} className="text-secondary" /> OCR Cleanup:
+        <div className="flex flex-wrap items-center gap-3 bg-card p-1.5 rounded-lg border shadow-sm flex-1 min-w-[300px]">
+          <div className="flex items-center gap-2 border-r pr-3">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+              <Layers size={12} className="text-primary" /> Strategy:
             </span>
-            <div className="flex flex-wrap gap-4">
+            <Select value={strategy} onValueChange={(v: ExtractionStrategy) => onStrategyChange?.(v)}>
+              <SelectTrigger className="h-7 text-[10px] w-32 border-none bg-muted/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="single-pass" className="text-[10px]">Single Pass</SelectItem>
+                <SelectItem value="cell-by-cell" className="text-[10px]">Cell-by-Cell</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+              <Sparkles size={12} className="text-secondary" /> Cleanup:
+            </span>
+            <div className="flex gap-4">
               <div className="flex items-center gap-2">
-                <Switch 
-                  id={`binarize-${cropRect.id}`} 
-                  checked={preprocessing.binarize} 
-                  onCheckedChange={() => togglePreprocessing('binarize')}
-                  className="scale-75"
-                />
-                <Label htmlFor={`binarize-${cropRect.id}`} className="text-[10px] font-medium cursor-pointer">Binarize</Label>
-              </div>
-
-              {preprocessing.binarize && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button size="icon" variant="ghost" className="h-6 w-6">
-                      <Settings2 size={12} className="text-muted-foreground" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 p-4 space-y-4">
-                    <div className="space-y-4">
-                      <h4 className="text-xs font-bold uppercase tracking-wider border-b pb-2">Binarization Settings</h4>
-                      
-                      <div className="space-y-2">
-                        <Label className="text-[10px] font-bold">Method</Label>
-                        <Select value={preprocessing.thresholdMethod} onValueChange={(v: any) => updateOption('thresholdMethod', v)}>
-                          <SelectTrigger className="h-8 text-[10px]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="global" className="text-[10px]">Binary (Global)</SelectItem>
-                            <SelectItem value="adaptive" className="text-[10px]">Adaptive</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {preprocessing.thresholdMethod === 'global' ? (
-                        <div className="space-y-2">
-                          <div className="flex justify-between items-center">
-                            <Label className="text-[10px] font-bold">Threshold Value</Label>
-                            <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdValue}</span>
-                          </div>
-                          <Slider 
-                            min={0} 
-                            max={255} 
-                            step={1} 
-                            value={[preprocessing.thresholdValue]} 
-                            onValueChange={(v) => updateOption('thresholdValue', v[0])}
-                          />
-                        </div>
-                      ) : (
-                        <>
-                          <div className="space-y-2">
-                            <Label className="text-[10px] font-bold">Adaptive Method</Label>
-                            <Select value={preprocessing.adaptiveMethod} onValueChange={(v: any) => updateOption('adaptiveMethod', v)}>
-                              <SelectTrigger className="h-8 text-[10px]">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="mean" className="text-[10px]">Mean C</SelectItem>
-                                <SelectItem value="gaussian" className="text-[10px]">Gaussian C</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                              <Label className="text-[10px] font-bold">Block Size</Label>
-                              <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdBlockSize}px</span>
-                            </div>
-                            <Slider 
-                              min={3} 
-                              max={99} 
-                              step={2} 
-                              value={[preprocessing.thresholdBlockSize]} 
-                              onValueChange={(v) => updateOption('thresholdBlockSize', v[0])}
-                            />
-                          </div>
-
-                          <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                              <Label className="text-[10px] font-bold">Constant (C)</Label>
-                              <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdC}</span>
-                            </div>
-                            <Slider 
-                              min={0} 
-                              max={20} 
-                              step={1} 
-                              value={[preprocessing.thresholdC]} 
-                              onValueChange={(v) => updateOption('thresholdC', v[0])}
-                            />
-                          </div>
-                        </>
-                      )}
-
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center">
-                          <Label className="text-[10px] font-bold">Max Value</Label>
-                          <span className="text-[10px] text-muted-foreground">{preprocessing.thresholdMaxValue}</span>
-                        </div>
-                        <Slider 
-                          min={0} 
-                          max={255} 
-                          step={1} 
-                          value={[preprocessing.thresholdMaxValue]} 
-                          onValueChange={(v) => updateOption('thresholdMaxValue', v[0])}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label className="text-[10px] font-bold">Type</Label>
-                        <Select value={preprocessing.thresholdType} onValueChange={(v: any) => updateOption('thresholdType', v)}>
-                          <SelectTrigger className="h-8 text-[10px]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="binary" className="text-[10px]">Binary</SelectItem>
-                            <SelectItem value="binary_inv" className="text-[10px]">Binary Inverse</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              )}
-
-              <div className="flex items-center gap-2">
-                <Switch 
-                  id={`deskew-${cropRect.id}`} 
-                  checked={preprocessing.deskew} 
-                  onCheckedChange={() => togglePreprocessing('deskew')}
-                  className="scale-75"
-                />
-                <Label htmlFor={`deskew-${cropRect.id}`} className="text-[10px] font-medium cursor-pointer">Deskew</Label>
+                <Switch checked={preprocessing.binarize} onCheckedChange={(v) => onPreprocessingChange?.({...preprocessing, binarize: v})} className="scale-75" />
+                <Label className="text-[10px] font-medium">Binarize</Label>
               </div>
               <div className="flex items-center gap-2">
-                <Switch 
-                  id={`denoise-${cropRect.id}`} 
-                  checked={preprocessing.denoise} 
-                  onCheckedChange={() => togglePreprocessing('denoise')}
-                  className="scale-75"
-                />
-                <Label htmlFor={`denoise-${cropRect.id}`} className="text-[10px] font-medium cursor-pointer">Denoise</Label>
+                <Switch checked={preprocessing.deskew} onCheckedChange={(v) => onPreprocessingChange?.({...preprocessing, deskew: v})} className="scale-75" />
+                <Label className="text-[10px] font-medium">Deskew</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch checked={preprocessing.denoise} onCheckedChange={(v) => onPreprocessingChange?.({...preprocessing, denoise: v})} className="scale-75" />
+                <Label className="text-[10px] font-medium">Denoise</Label>
               </div>
             </div>
           </div>
 
-          <div className="flex gap-2 shrink-0">
-            <Button 
-              size="sm" 
-              variant={preprocessing.showTextBoxes ? "secondary" : "outline"} 
-              className="h-7 text-[10px] gap-1.5"
-              onClick={() => {
-                const newValue = !preprocessing.showTextBoxes;
-                updateOption('showTextBoxes', newValue);
-                setShowProcessedPreview(true);
-              }}
-            >
-              <BoxSelect size={12} />
-              Show Text Blocks
+          <div className="ml-auto flex gap-2">
+            <Button size="sm" variant={preprocessing.showTextBoxes ? "secondary" : "outline"} className="h-7 text-[10px] gap-1.5" onClick={() => onPreprocessingChange?.({...preprocessing, showTextBoxes: !preprocessing.showTextBoxes})}>
+              <BoxSelect size={12} /> Blocks
             </Button>
-
-            <Button 
-              size="sm" 
-              variant={showProcessedPreview ? "secondary" : "outline"} 
-              className="h-7 text-[10px] gap-1.5"
-              onClick={() => setShowProcessedPreview(!showProcessedPreview)}
-            >
-              {showProcessedPreview ? <EyeOff size={12} /> : <Eye size={12} />}
-              Preview Cleanup
+            <Button size="sm" variant={showProcessedPreview ? "secondary" : "outline"} className="h-7 text-[10px] gap-1.5" onClick={() => setShowProcessedPreview(!showProcessedPreview)}>
+              {showProcessedPreview ? <EyeOff size={12} /> : <Eye size={12} />} Preview
             </Button>
           </div>
         </div>
 
-        <TooltipProvider>
-          <div className="flex gap-2 bg-card p-1 rounded-md border shadow-sm">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="sm" variant={activeLine?.type === 'v' || addMode === 'v' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'v' ? null : 'v')} className="h-8">
-                  <Plus className="w-4 h-4 mr-1" /> Vertical
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Add vertical grid guide</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="sm" variant="ghost" onClick={() => clearLines('v')} className="h-8 text-destructive hover:bg-destructive/10">
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Clear all verticals</TooltipContent>
-            </Tooltip>
-            <div className="w-px bg-border mx-1" />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="sm" variant={activeLine?.type === 'h' || addMode === 'h' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'h' ? null : 'h')} className="h-8">
-                  <Plus className="w-4 h-4 mr-1" /> Horizontal
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Add horizontal grid guide</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="sm" variant="ghost" onClick={() => clearLines('h')} className="h-8 text-destructive hover:bg-destructive/10">
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Clear all horizontals</TooltipContent>
-            </Tooltip>
-          </div>
-        </TooltipProvider>
+        <div className="flex gap-2 bg-card p-1 rounded-md border shadow-sm">
+          <Button size="sm" variant={addMode === 'v' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'v' ? null : 'v')} className="h-8">
+            <Plus className="w-4 h-4 mr-1" /> V
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => clearLines('v')} className="h-8 text-destructive"><Trash2 className="w-4 h-4" /></Button>
+          <div className="w-px bg-border mx-1" />
+          <Button size="sm" variant={addMode === 'h' ? "secondary" : "ghost"} onClick={() => setAddMode(addMode === 'h' ? null : 'h')} className="h-8">
+            <Plus className="w-4 h-4 mr-1" /> H
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => clearLines('h')} className="h-8 text-destructive"><Trash2 className="w-4 h-4" /></Button>
+        </div>
       </div>
 
       <div 
         ref={containerRef}
-        className={cn(
-          "relative border rounded-lg overflow-hidden bg-white select-none cursor-crosshair group shadow-inner mx-auto",
-          addMode && "ring-2 ring-primary/20",
-          (isDetecting || isPreviewLoading) && "opacity-70 grayscale-[50%]"
-        )}
+        className={cn("relative border rounded-lg overflow-hidden bg-white shadow-inner mx-auto cursor-crosshair", (isDetecting || isPreviewLoading) && "opacity-70")}
         onClick={handleContainerClick}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        style={{ 
-          width: '100%',
-          maxWidth: '100%',
-          aspectRatio: `${cropAspect}`,
-          maxHeight: '70vh',
-        }}
+        style={{ width: '100%', maxWidth: '100%', aspectRatio: `${cropAspect}`, maxHeight: '70vh' }}
       >
         {!showProcessedPreview || !processedImageUri ? (
-          <img 
-            src={imageSrc} 
-            alt="Table crop"
-            className="absolute max-w-none pointer-events-none"
-            style={{
-              width: `${10000 / cropRect.width}%`,
-              height: `${10000 / cropRect.height}%`,
-              left: `${- (cropRect.x / cropRect.width) * 100}%`,
-              top: `${- (cropRect.y / cropRect.height) * 100}%`,
-            }}
-          />
+          <img src={imageSrc} className="absolute max-w-none pointer-events-none" style={{ width: `${10000 / cropRect.width}%`, height: `${10000 / cropRect.height}%`, left: `${- (cropRect.x / cropRect.width) * 100}%`, top: `${- (cropRect.y / cropRect.height) * 100}%` }} />
         ) : (
-          <img 
-            src={processedImageUri} 
-            alt="Processed preview"
-            className="absolute inset-0 w-full h-full object-fill pointer-events-none"
-          />
+          <img src={processedImageUri} className="absolute inset-0 w-full h-full object-fill pointer-events-none" />
         )}
 
         {vLines.map(line => (
-          <div
-            key={line.id}
-            className={cn(
-              "absolute top-0 bottom-0 w-1.5 -ml-0.75 cursor-col-resize group z-20 transition-colors",
-              activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/60"
-            )}
-            style={{ left: `${line.position}%` }}
-            onMouseDown={(e) => handleMouseDown(line.id, 'v', e)}
-          >
-            <button 
-              className="absolute top-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 bg-destructive text-white rounded-full p-0.5 shadow-lg transition-opacity"
-              onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'v'); }}
-            >
-              <X className="w-3 h-3" />
-            </button>
+          <div key={line.id} className={cn("absolute top-0 bottom-0 w-1.5 -ml-0.75 cursor-col-resize z-20 transition-colors", activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/60")} style={{ left: `${line.position}%` }} onMouseDown={(e) => handleMouseDown(line.id, 'v', e)}>
+            <button className="absolute top-1 left-1/2 -translate-x-1/2 bg-destructive text-white rounded-full p-0.5 shadow-lg" onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'v'); }}><X className="w-3 h-3" /></button>
           </div>
         ))}
 
         {hLines.map(line => (
-          <div
-            key={line.id}
-            className={cn(
-              "absolute left-0 right-0 h-1.5 -mt-0.75 cursor-row-resize group z-20 transition-colors",
-              activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/60"
-            )}
-            style={{ top: `${line.position}%` }}
-            onMouseDown={(e) => handleMouseDown(line.id, 'h', e)}
-          >
-            <button 
-              className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 bg-destructive text-white rounded-full p-0.5 shadow-lg transition-opacity"
-              onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'h'); }}
-            >
-              <X className="w-3 h-3" />
-            </button>
+          <div key={line.id} className={cn("absolute left-0 right-0 h-1.5 -mt-0.75 cursor-row-resize z-20 transition-colors", activeLine?.id === line.id ? "bg-primary" : "bg-primary/30 hover:bg-primary/60")} style={{ top: `${line.position}%` }} onMouseDown={(e) => handleMouseDown(line.id, 'h', e)}>
+            <button className="absolute left-1 top-1/2 -translate-y-1/2 bg-destructive text-white rounded-full p-0.5 shadow-lg" onClick={(e) => { e.stopPropagation(); removeLine(line.id, 'h'); }}><X className="w-3 h-3" /></button>
           </div>
         ))}
-
-        {addMode && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-primary/5">
-            <span className="bg-primary text-white text-[10px] px-3 py-1 rounded-full shadow-lg font-bold">
-              Click to place {addMode === 'v' ? 'column' : 'row'} guide
-            </span>
-          </div>
-        )}
-
-        {(isDetecting || isPreviewLoading) && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/5 z-50">
-            <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          </div>
-        )}
+        {(isDetecting || isPreviewLoading) && <div className="absolute inset-0 flex items-center justify-center bg-black/5 z-50"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}
       </div>
     </div>
   );

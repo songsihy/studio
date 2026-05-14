@@ -1,7 +1,9 @@
 
 export type ProcessingStatus = 'idle' | 'uploading' | 'selecting-tables' | 'detecting' | 'refining' | 'ocr-processing' | 'completed' | 'error';
 
-export type OcrEngineType = 'tesseract' | 'ai' | 'scribe';
+export type OcrEngineType = 'tesseract' | 'ai';
+
+export type ExtractionStrategy = 'single-pass' | 'cell-by-cell';
 
 export interface AiEngineConfig {
   apiUrl: string;
@@ -26,32 +28,26 @@ export interface PreprocessingOptions {
   deskew: boolean;
   denoise: boolean;
   thresholdMethod: 'global' | 'adaptive';
-  thresholdValue: number; // For global thresholding
-  thresholdBlockSize: number; // For adaptive thresholding
-  thresholdC: number; // For adaptive thresholding
+  thresholdValue: number;
+  thresholdBlockSize: number;
+  thresholdC: number;
   thresholdMaxValue: number;
   adaptiveMethod: 'mean' | 'gaussian';
   thresholdType: 'binary' | 'binary_inv';
-  showTextBoxes?: boolean; // Visualization option
+  showTextBoxes?: boolean;
 }
 
 export interface TableRegion {
   id: string;
-  name: string; // Variable name for the table
-  x: number; // percentage
-  y: number; // percentage
-  width: number; // percentage
-  height: number; // percentage
-  verticalLines?: TableLine[];
-  horizontalLines?: TableLine[];
-  preprocessing?: PreprocessingOptions;
-}
-
-export interface TableCell {
-  rowIndex: number;
-  colIndex: number;
-  text: string;
-  confidence: number;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  verticalLines: TableLine[];
+  horizontalLines: TableLine[];
+  preprocessing: PreprocessingOptions;
+  extractionStrategy: ExtractionStrategy;
 }
 
 export interface ExtractedTable {
@@ -63,6 +59,6 @@ export interface ExtractedTable {
 
 export interface DocumentPage {
   id: string;
-  originalImage: string; // Data URI
+  originalImage: string;
   tableRegions: TableRegion[];
 }
