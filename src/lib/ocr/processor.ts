@@ -128,6 +128,8 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   const sorted = [...lines].sort((a, b) => a.position - b.position);
   const merged: TableLine[] = [];
   
+  if (sorted.length === 0) return [];
+  
   let currentGroup: TableLine[] = [sorted[0]];
   
   for (let i = 1; i < sorted.length; i++) {
@@ -147,7 +149,7 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 }
 
 function selectBestInGroup(group: TableLine[]): TableLine {
-  // Priority: Physical Wired borders are anchors, but we always take the rightmost line in a cluster.
+  // Always preserve the rightmost line in a cluster ("Drop the left lines")
   return group[group.length - 1];
 }
 
@@ -231,14 +233,14 @@ export async function detectLinesInSingleRegion(
         // Occupancy analysis for columns
         const xOccupancy = new Array(w).fill(false);
         wordBoxes.forEach((box: any) => {
-          const charWidthEstimate = (box.x1 - box.x0) / (box.text?.length || 1);
-          const hPadding = charWidthEstimate * 0.4; // Virtual dilation to bridge characters
-          const startX = Math.floor(box.x0 - hPadding);
-          const endX = Math.ceil(box.x1 + hPadding);
+          const charHeightEstimate = box.y1 - box.y0;
+          const hDilation = charHeightEstimate * 0.6; // Increased dilation to prevent cutting through words
+          const startX = Math.floor(box.x0 - hDilation);
+          const endX = Math.ceil(box.x1 + hDilation);
           for (let i = startX; i < endX; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
         });
         
-        const vGapThreshold = Math.max(1, Math.floor(w * 0.008)); 
+        const vGapThreshold = Math.max(1, Math.floor(w * 0.012)); 
         findGapsInOccupancy(xOccupancy, vGapThreshold).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
@@ -253,7 +255,7 @@ export async function detectLinesInSingleRegion(
             const prev = cluster[cluster.length - 1];
             const wordH = word.y1 - word.y0;
             const overlap = Math.min(word.y1, prev.y1) - Math.max(word.y0, prev.y0);
-            if (overlap > wordH * 0.3) cluster.push(word);
+            if (overlap > wordH * 0.35) cluster.push(word);
             else { rows.push(cluster); cluster = [word]; }
           }
           rows.push(cluster);
@@ -266,10 +268,10 @@ export async function detectLinesInSingleRegion(
         }
 
         // 3. Mixed Fusion & Pruning
-        // Heuristic: If there is no text between a Wired and Wireless line, the Wireless guess is likely the true data edge.
-        // But per user instruction, we prioritize the Wired line if it's correct.
+        // Heuristic: Reserve wired lines first, but drop left lines in clusters.
+        // If a Wired line and Wireless line are in a cluster, the rightmost one is kept.
         let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
-        let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.2);
+        let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
 
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
@@ -304,7 +306,7 @@ function findGapsInOccupancy(occupancy: boolean[], minWidth: number): number[] {
 
 /**
  * Pre-processing for Tesseract OCR.
- * Focuses on black text on white background.
+ * Focuses on making text clean, large, and high-contrast.
  */
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
@@ -408,7 +410,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
 }
 
 /**
- * Optimized Step 4 Extraction with 2.0x scaling for quality.
+ * Optimized Step 4 Extraction with 2.5x scaling for superior character recognition.
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -419,7 +421,9 @@ export async function processTablesOnPage(
 ): Promise<ExtractedTable[]> {
   const isTesseract = engineConfig.type === 'tesseract';
   let worker: any = null;
-  if (isTesseract) worker = await createWorker(language);
+  if (isTesseract) {
+    worker = await createWorker(language);
+  }
 
   const img = new Image();
   img.crossOrigin = 'Anonymous';
@@ -437,7 +441,7 @@ export async function processTablesOnPage(
 
   for (const region of regions) {
     const tempCanvas = document.createElement('canvas');
-    const scale = 2.0; // Higher DPI scaling for Tesseract quality
+    const scale = 2.5; // High resolution upscale for better OCR
 
     if (useCv && srcMat) {
       try {
@@ -449,11 +453,12 @@ export async function processTablesOnPage(
         const regionMat = srcMat.roi(new cv.Rect(tableX, tableY, tableW, tableH));
         const processedRegionMat = preprocessMatForOcr(cv, regionMat, region.preprocessing);
         
-        // Render at 2.0x scale
         tempCanvas.width = tableW * scale;
         tempCanvas.height = tableH * scale;
         const ctx = tempCanvas.getContext('2d');
         if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
           const offscreenCanvas = document.createElement('canvas');
           cv.imshow(offscreenCanvas, processedRegionMat);
           ctx.drawImage(offscreenCanvas, 0, 0, tableW, tableH, 0, 0, tempCanvas.width, tempCanvas.height);
@@ -471,18 +476,35 @@ export async function processTablesOnPage(
 
     if (isTesseract) {
       const { data } = await worker.recognize(tempCanvas);
+      
+      // Group words into rows and columns based on the user-defined grid
       data.words.forEach((word: any) => {
         const centerX = (word.bbox.x0 + word.bbox.x1) / 2;
         const centerY = (word.bbox.y0 + word.bbox.y1) / 2;
         const xPct = (centerX / tempCanvas.width) * 100;
         const yPct = (centerY / tempCanvas.height) * 100;
+        
         let colIdx = vCoords.findIndex((v, i) => i < vCoords.length - 1 && xPct >= v && xPct < vCoords[i + 1]);
         let rowIdx = hCoords.findIndex((h, i) => i < hCoords.length - 1 && yPct >= h && yPct < hCoords[i + 1]);
+        
         if (colIdx !== -1 && rowIdx !== -1) {
+          // Store raw words in a temporary structure to sort later if needed
           tableData[rowIdx][colIdx] = (tableData[rowIdx][colIdx] + " " + word.text).trim();
         }
       });
+      
+      // Final polish for cell text (sorting words by layout)
+      for (let r = 0; r < rowsCount; r++) {
+        for (let c = 0; c < colsCount; c++) {
+          if (tableData[r][c]) {
+            // Words are already appended in Tesseract traversal order (usually L-to-R, T-to-B)
+            // But we can further clean it up if needed.
+            tableData[r][c] = tableData[r][c].replace(/\s+/g, ' ');
+          }
+        }
+      }
     } else {
+      // AI Engine Path: Still uses individual cell crops for focused AI vision
       const cellCanvas = document.createElement('canvas');
       const cellCtx = cellCanvas.getContext('2d');
       if (cellCtx) {
