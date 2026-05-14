@@ -124,6 +124,7 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
   
+  // Sort by position
   const sorted = [...lines].sort((a, b) => a.position - b.position);
   const merged: TableLine[] = [];
   
@@ -133,16 +134,19 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
     const line = sorted[i];
     const lastInGroup = currentGroup[currentGroup.length - 1];
     
+    // If the distance to the last line in the group is less than the threshold, add to cluster
     if (line.position - lastInGroup.position < threshold) {
       currentGroup.push(line);
     } else {
-      // "Drop the left line": Pick the rightmost position in the cluster
+      // "Drop the left line": Pick the rightmost position in the cluster.
+      // This preserves the most accurate physical border or the final gap.
       const rightmost = currentGroup[currentGroup.length - 1];
       merged.push(rightmost);
       currentGroup = [line];
     }
   }
   
+  // Handle the final group
   const rightmost = currentGroup[currentGroup.length - 1];
   merged.push(rightmost);
   
@@ -151,7 +155,7 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 
 /**
  * Detects grid lines using a hybrid approach with intelligent wireless-wired pruning.
- * Priority: Reserve Wired line first, but drop it if it's redundant to a logical Wireless gap with no text between.
+ * Priority: Reserve Wired lines as anchors, and consolidate clusters by dropping left-most lines.
  */
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
@@ -193,27 +197,27 @@ export async function detectLinesInSingleRegion(
         let wirelessV: TableLine[] = [];
         let wirelessH: TableLine[] = [];
 
-        // 1. Wired Pass (Physical Borders)
-        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 25))));
+        // 1. Wired Pass (Physical Borders) - High sensitivity
+        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 30))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
         cv.dilate(vMat, vMat, vKernel);
         for (let j = 0; j < vMat.cols; j++) {
           let count = 0;
           for (let i = 0; i < vMat.rows; i++) if (vMat.ucharAt(i, j) > 0) count++;
-          if (count > h * 0.4) {
+          if (count > h * 0.35) {
             wiredV.push({ id: `w-v-${j}`, type: 'vertical', position: (j / vMat.cols) * 100 });
           }
         }
 
-        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.max(2, Math.floor(w / 25)), 1));
+        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.max(2, Math.floor(w / 30)), 1));
         const hMat = new cv.Mat();
         cv.erode(thresh, hMat, hKernel);
         cv.dilate(hMat, hMat, hKernel);
         for (let i = 0; i < hMat.rows; i++) {
           let count = 0;
           for (let j = 0; j < hMat.cols; j++) if (hMat.ucharAt(i, j) > 0) count++;
-          if (count > w * 0.4) {
+          if (count > w * 0.35) {
             wiredH.push({ id: `w-h-${i}`, type: 'horizontal', position: (i / hMat.rows) * 100 });
           }
         }
@@ -226,7 +230,7 @@ export async function detectLinesInSingleRegion(
         const { data } = await worker.recognize(tempCanvas);
         const wordBoxes = data.words.map((w: any) => w.bbox);
 
-        // Occupancy mapping for pruning logic
+        // Occupancy mapping for column/row guts
         const xOccupancy = new Array(w).fill(false);
         const yOccupancy = new Array(h).fill(false);
         wordBoxes.forEach((box: any) => {
@@ -234,12 +238,12 @@ export async function detectLinesInSingleRegion(
           for (let i = Math.floor(box.y0); i < Math.ceil(box.y1); i++) if (i >= 0 && i < h) yOccupancy[i] = true;
         });
 
-        // Detect Wireless Verticals (Column Gutters)
+        // Detect Wireless Verticals
         findGapsInOccupancy(xOccupancy, 1).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
 
-        // Detect Wireless Horizontals (Row Gutters via clustering)
+        // Detect Wireless Horizontals via clustering
         const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
         const rows: any[][] = [];
         if (sortedWords.length > 0) {
@@ -260,48 +264,11 @@ export async function detectLinesInSingleRegion(
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // 3. PRUNING LOGIC: "Reserve Wired line first", but "Drop wired if no text between wired and wireless"
-        // Also: "Its are clusters of redundant lines, the left line should drop"
-        
-        // Filter out Wired lines that are redundant to logical Wireless gaps with no content between them
-        const filteredWiredV = wiredV.filter(wv => {
-          const closestWireless = wirelessV.reduce((prev, curr) => 
-            Math.abs(curr.position - wv.position) < Math.abs(prev.position - wv.position) ? curr : prev, 
-            wirelessV[0] || null
-          );
-          if (!closestWireless) return true;
-          if (Math.abs(closestWireless.position - wv.position) > 2.0) return true;
-          
-          const start = Math.min(wv.position, closestWireless.position) * w / 100;
-          const end = Math.max(wv.position, closestWireless.position) * w / 100;
-          let hasText = false;
-          for (let i = Math.floor(start); i < Math.ceil(end); i++) {
-            if (i >= 0 && i < w && xOccupancy[i]) { hasText = true; break; }
-          }
-          // If NO text between them, don't want this wired line (return false)
-          return hasText;
-        });
-
-        const filteredWiredH = wiredH.filter(wh => {
-          const closestWireless = wirelessH.reduce((prev, curr) => 
-            Math.abs(curr.position - wh.position) < Math.abs(prev.position - wh.position) ? curr : prev, 
-            wirelessH[0] || null
-          );
-          if (!closestWireless) return true;
-          if (Math.abs(closestWireless.position - wh.position) > 2.0) return true;
-
-          const start = Math.min(wh.position, closestWireless.position) * h / 100;
-          const end = Math.max(wh.position, closestWireless.position) * h / 100;
-          let hasText = false;
-          for (let i = Math.floor(start); i < Math.ceil(end); i++) {
-            if (i >= 0 && i < h && yOccupancy[i]) { hasText = true; break; }
-          }
-          return hasText;
-        });
-
-        // 4. Final Aggregation with "Drop-Left" Merging
-        let finalV = mergeCloseLines([...filteredWiredV, ...wirelessV], 1.5);
-        let finalH = mergeCloseLines([...filteredWiredH, ...wirelessH], 1.5);
+        // 3. FINAL AGGREGATION AND PRUNING
+        // We always keep Wired lines. We add Wireless lines to the mix.
+        // Then we run mergeCloseLines which "drops the left line" in any redundant clusters.
+        let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
+        let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
 
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
@@ -309,7 +276,7 @@ export async function detectLinesInSingleRegion(
 
         resolve({ vLines: finalV, hLines: finalH });
       } catch (err) {
-        console.error("Hybrid detection error:", err);
+        console.error("Grid detection error:", err);
         resolve({ vLines: [], hLines: [] });
       }
     };
