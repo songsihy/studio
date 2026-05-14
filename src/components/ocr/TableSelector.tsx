@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useRef } from 'react';
@@ -75,10 +76,10 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
         verticalLines: [],
         horizontalLines: [],
         preprocessing: {
-          binarize: false,
+          binarize: false, // Default to OFF per user request
           deskew: false,
           denoise: false,
-          thresholdMethod: 'global', // Set Binary (Global) as default for manually added regions
+          thresholdMethod: 'global', 
           thresholdValue: 128,
           thresholdBlockSize: 31,
           thresholdC: 2,
@@ -101,7 +102,6 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 p-4">
-      {/* Table Management Panel */}
       <Card className="w-full lg:w-80 border-none shadow-none bg-muted/30">
         <CardContent className="p-4 space-y-4">
           <div className="flex items-center justify-between">
@@ -194,7 +194,6 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
         </CardContent>
       </Card>
 
-      {/* Preview and Drawing Canvas */}
       <div className="flex-1 space-y-4">
         <div className="flex justify-between items-center bg-card p-2 px-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
@@ -220,7 +219,6 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
                   className="max-w-full h-auto block pointer-events-none"
                 />
                 
-                {/* Existing Regions */}
                 {regions.map(region => (
                   <div
                     key={region.id}
@@ -246,7 +244,6 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
                   </div>
                 ))}
 
-                {/* Drawing Layer */}
                 {isDrawing && (
                   <div
                     className="absolute border-2 border-dashed border-secondary bg-secondary/10 z-50 pointer-events-none"

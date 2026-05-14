@@ -120,6 +120,7 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 
 /**
  * Consolidates clustered lines into a single logical line.
+ * Per user instruction: "Drop the left lines" - we preserve the rightmost position in any cluster.
  */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
@@ -146,12 +147,8 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 }
 
 function selectBestInGroup(group: TableLine[]): TableLine {
-  // Priority: Physical Wired borders. Drop left lines in redundant clusters.
-  const wiredLines = group.filter(l => l.id.startsWith('w-'));
-  if (wiredLines.length > 0) {
-    return wiredLines[wiredLines.length - 1]; // Rightmost physical line
-  }
-  return group[group.length - 1]; // Rightmost logical line
+  // Priority: Physical Wired borders are anchors, but we always take the rightmost line in a cluster.
+  return group[group.length - 1];
 }
 
 /**
@@ -223,27 +220,30 @@ export async function detectLinesInSingleRegion(
           }
         }
 
-        // 2. Wireless Pass (Layout analysis)
+        // 2. Wireless Pass (Layout analysis with Tesseract)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
         const worker = existingWorker || await createWorker(language);
         const { data } = await worker.recognize(tempCanvas);
-        const wordBoxes = data.words.map((w: any) => w.bbox);
+        const wordBoxes = data.words.map((word: any) => word.bbox);
 
+        // Occupancy analysis for columns
         const xOccupancy = new Array(w).fill(false);
         wordBoxes.forEach((box: any) => {
-          const hPadding = (box.y1 - box.y0) * 0.25;
+          const charWidthEstimate = (box.x1 - box.x0) / (box.text?.length || 1);
+          const hPadding = charWidthEstimate * 0.4; // Virtual dilation to bridge characters
           const startX = Math.floor(box.x0 - hPadding);
           const endX = Math.ceil(box.x1 + hPadding);
           for (let i = startX; i < endX; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
         });
         
-        const vGapThreshold = Math.max(2, Math.floor(w * 0.012));
+        const vGapThreshold = Math.max(1, Math.floor(w * 0.008)); 
         findGapsInOccupancy(xOccupancy, vGapThreshold).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
 
+        // Row clustering for rows
         const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
         const rows: any[][] = [];
         if (sortedWords.length > 0) {
@@ -253,7 +253,7 @@ export async function detectLinesInSingleRegion(
             const prev = cluster[cluster.length - 1];
             const wordH = word.y1 - word.y0;
             const overlap = Math.min(word.y1, prev.y1) - Math.max(word.y0, prev.y0);
-            if (overlap > wordH * 0.45) cluster.push(word);
+            if (overlap > wordH * 0.3) cluster.push(word);
             else { rows.push(cluster); cluster = [word]; }
           }
           rows.push(cluster);
@@ -265,7 +265,9 @@ export async function detectLinesInSingleRegion(
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // 3. Consolidation
+        // 3. Mixed Fusion & Pruning
+        // Heuristic: If there is no text between a Wired and Wireless line, the Wireless guess is likely the true data edge.
+        // But per user instruction, we prioritize the Wired line if it's correct.
         let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
         let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.2);
 
@@ -302,6 +304,7 @@ function findGapsInOccupancy(occupancy: boolean[], minWidth: number): number[] {
 
 /**
  * Pre-processing for Tesseract OCR.
+ * Focuses on black text on white background.
  */
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
@@ -381,7 +384,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
             if (options.showTextBoxes) {
               const worker = await createWorker(language);
               const { data } = await worker.recognize(canvas);
-              ctx.strokeStyle = '#ef4444'; // Tailwind destructive/red-500
+              ctx.strokeStyle = '#ef4444'; 
               ctx.lineWidth = 1.5;
               data.words.forEach((word: any) => {
                 ctx.strokeRect(word.bbox.x0, word.bbox.y0, word.bbox.x1 - word.bbox.x0, word.bbox.y1 - word.bbox.y0);
@@ -405,7 +408,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
 }
 
 /**
- * Optimized Step 4 Extraction.
+ * Optimized Step 4 Extraction with 2.0x scaling for quality.
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -434,18 +437,30 @@ export async function processTablesOnPage(
 
   for (const region of regions) {
     const tempCanvas = document.createElement('canvas');
+    const scale = 2.0; // Higher DPI scaling for Tesseract quality
+
     if (useCv && srcMat) {
       try {
         let tableX = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
         let tableY = Math.max(0, Math.floor((region.y / 100) * srcMat.rows));
         let tableW = Math.min(srcMat.cols - tableX, Math.floor((region.width / 100) * srcMat.cols));
         let tableH = Math.min(srcMat.rows - tableY, Math.floor((region.height / 100) * srcMat.rows));
+        
         const regionMat = srcMat.roi(new cv.Rect(tableX, tableY, tableW, tableH));
         const processedRegionMat = preprocessMatForOcr(cv, regionMat, region.preprocessing);
-        cv.imshow(tempCanvas, processedRegionMat);
+        
+        // Render at 2.0x scale
+        tempCanvas.width = tableW * scale;
+        tempCanvas.height = tableH * scale;
+        const ctx = tempCanvas.getContext('2d');
+        if (ctx) {
+          const offscreenCanvas = document.createElement('canvas');
+          cv.imshow(offscreenCanvas, processedRegionMat);
+          ctx.drawImage(offscreenCanvas, 0, 0, tableW, tableH, 0, 0, tempCanvas.width, tempCanvas.height);
+        }
         regionMat.delete(); processedRegionMat.delete();
-      } catch (e) { fallbackToCanvas(img, region, tempCanvas, true, region.preprocessing); }
-    } else fallbackToCanvas(img, region, tempCanvas, true, region.preprocessing);
+      } catch (e) { fallbackToCanvas(img, region, tempCanvas, scale); }
+    } else fallbackToCanvas(img, region, tempCanvas, scale);
 
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
@@ -499,10 +514,10 @@ export async function processTablesOnPage(
   return allResults;
 }
 
-function fallbackToCanvas(img: HTMLImageElement, region: TableRegion, canvas: HTMLCanvasElement, preprocess: boolean = false, options?: PreprocessingOptions) {
+function fallbackToCanvas(img: HTMLImageElement, region: TableRegion, canvas: HTMLCanvasElement, scale: number = 1.0) {
   const ctx = canvas.getContext('2d'); if (!ctx) return;
   const x = (region.x / 100) * img.width; const y = (region.y / 100) * img.height;
   const w = (region.width / 100) * img.width; const h = (region.height / 100) * img.height;
-  canvas.width = w; canvas.height = h;
-  ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+  canvas.width = w * scale; canvas.height = h * scale;
+  ctx.drawImage(img, x, y, w, h, 0, 0, canvas.width, canvas.height);
 }
