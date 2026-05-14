@@ -2,9 +2,9 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { TableLine, TableRegion, PreprocessingOptions } from '@/lib/ocr-types';
+import { TableLine, TableRegion, PreprocessingOptions, OcrEngineType } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, Settings2, BoxSelect } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, Settings2, BoxSelect, Cpu, Bot, PenTool } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { 
   Tooltip,
@@ -19,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { detectLinesInSingleRegion, getPreprocessedPreview } from '@/lib/ocr/processor';
 import { useToast } from '@/hooks/use-toast';
+import { Badge } from '@/components/ui/badge';
 
 interface LineEditorProps {
   imageSrc: string | null;
@@ -29,6 +30,7 @@ interface LineEditorProps {
   onPreprocessingChange?: (options: PreprocessingOptions) => void;
   title: string;
   language?: string;
+  engineType?: OcrEngineType;
 }
 
 export const LineEditor: React.FC<LineEditorProps> = ({ 
@@ -39,7 +41,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   onLinesChange,
   onPreprocessingChange,
   title,
-  language = 'eng+chi_tra'
+  language = 'eng+chi_tra',
+  engineType = 'tesseract'
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState<{ id: string; type: 'v' | 'h' } | null>(null);
@@ -209,11 +212,20 @@ export const LineEditor: React.FC<LineEditorProps> = ({
 
   const cropAspect = (cropRect.width * imgNaturalSize.w) / (cropRect.height * imgNaturalSize.h);
 
+  const EngineIcon = engineType === 'tesseract' ? Cpu : engineType === 'scribe' ? PenTool : Bot;
+  const engineLabel = engineType === 'tesseract' ? 'Tesseract' : engineType === 'scribe' ? 'Scribe' : 'AI Engine';
+
   return (
     <div className="space-y-4 border rounded-xl p-4 bg-muted/10 shadow-sm">
       <div className="flex flex-wrap justify-between items-center gap-4">
         <div className="flex items-center gap-3">
           <h3 className="font-bold text-sm text-primary uppercase tracking-tight">{title}</h3>
+          
+          <Badge variant="secondary" className="h-6 flex items-center gap-1.5 px-2 bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 transition-colors">
+            <EngineIcon size={10} />
+            <span className="text-[10px] font-bold uppercase tracking-wider">{engineLabel}</span>
+          </Badge>
+
           <Button 
             size="sm" 
             variant="outline" 
@@ -226,9 +238,9 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           </Button>
         </div>
 
-        <div className="flex items-center gap-4 bg-card p-1.5 rounded-lg border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 bg-card p-1.5 rounded-lg border shadow-sm max-w-full overflow-hidden">
           <div className="flex items-center gap-3 px-2 border-r pr-4">
-            <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1 shrink-0">
               <Sparkles size={12} className="text-secondary" /> OCR Cleanup:
             </span>
             <div className="flex gap-4">
@@ -377,7 +389,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 shrink-0">
             <Button 
               size="sm" 
               variant={preprocessing.showTextBoxes ? "secondary" : "outline"} 

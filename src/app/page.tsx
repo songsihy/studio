@@ -467,7 +467,18 @@ export default function TableScanPro() {
                     {pages.map((page, pIdx) => (
                       <React.Fragment key={page.id}>
                         {(page.tableRegions || []).map((region, rIdx) => (
-                          <LineEditor key={region.id} title={`${region.name || `Table ${rIdx + 1}`} (Page ${pIdx + 1})`} language={selectedLangs.join('+')} imageSrc={page.originalImage} cropRect={region} vLines={region.verticalLines || []} hLines={region.horizontalLines || []} onLinesChange={(v, h) => updateRegionLines(region.id, v, h)} onPreprocessingChange={(opts) => updateRegionPreprocessing(region.id, opts)} />
+                          <LineEditor 
+                            key={region.id} 
+                            title={`${region.name || `Table ${rIdx + 1}`} (Page ${pIdx + 1})`} 
+                            language={selectedLangs.join('+')} 
+                            imageSrc={page.originalImage} 
+                            cropRect={region} 
+                            vLines={region.verticalLines || []} 
+                            hLines={region.horizontalLines || []} 
+                            onLinesChange={(v, h) => updateRegionLines(region.id, v, h)} 
+                            onPreprocessingChange={(opts) => updateRegionPreprocessing(region.id, opts)} 
+                            engineType={engineConfig.type}
+                          />
                         ))}
                       </React.Fragment>
                     ))}
