@@ -1,3 +1,4 @@
+
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -87,27 +88,6 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
   });
 }
 
-export async function detectLinesInRegions(
-  imageSrc: string, 
-  regions: TableRegion[], 
-  language: string = 'eng+chi_tra'
-): Promise<TableRegion[]> {
-  const worker = await createWorker(language);
-  const results: TableRegion[] = [];
-  
-  for (const region of regions) {
-    const { vLines, hLines } = await detectLinesInSingleRegion(imageSrc, region, language, worker);
-    results.push({
-      ...region,
-      verticalLines: vLines,
-      horizontalLines: hLines
-    });
-  }
-  
-  await worker.terminate();
-  return results;
-}
-
 /**
  * Merge Close Lines implementing:
  * 1. Wired-First (Physical borders prioritized over wireless guesses)
@@ -140,6 +120,27 @@ function selectBestInGroup(group: TableLine[]): TableLine {
   
   // 2. Drop-Left: Always pick the rightmost candidate in the sorted cluster
   return candidates[candidates.length - 1];
+}
+
+export async function detectLinesInRegions(
+  imageSrc: string, 
+  regions: TableRegion[], 
+  language: string = 'eng+chi_tra'
+): Promise<TableRegion[]> {
+  const worker = await createWorker(language);
+  const results: TableRegion[] = [];
+  
+  for (const region of regions) {
+    const { vLines, hLines } = await detectLinesInSingleRegion(imageSrc, region, language, worker);
+    results.push({
+      ...region,
+      verticalLines: vLines,
+      horizontalLines: hLines
+    });
+  }
+  
+  await worker.terminate();
+  return results;
 }
 
 export async function detectLinesInSingleRegion(
@@ -203,7 +204,7 @@ export async function detectLinesInSingleRegion(
           if (count > w * 0.35) wiredH.push({ id: `w-h-${i}`, type: 'horizontal', position: (i / hMat.rows) * 100 });
         }
 
-        // 2. Wireless Analysis (Layout-based Gaps)
+        // 2. Wireless Analysis (Layout-based Gaps using Tesseract locally for word bounding boxes)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
@@ -436,7 +437,8 @@ export async function processTablesOnPage(
       for (let r = 0; r < rowsCount; r++) {
         for (let c = 0; c < colsCount; c++) {
           const cellCanvas = document.createElement('canvas');
-          const padding = 0.1; // 10% padding to avoid clipping text touching grid lines
+          // Add 10% padding to avoid clipping text touching grid lines as requested
+          const padding = 0.1; 
           const xStart = Math.max(0, vCoords[c] - (vCoords[c+1] - vCoords[c]) * padding);
           const xEnd = Math.min(100, vCoords[c+1] + (vCoords[c+1] - vCoords[c]) * padding);
           const yStart = Math.max(0, hCoords[r] - (hCoords[r+1] - hCoords[r]) * padding);

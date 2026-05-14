@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -8,7 +9,6 @@ import {
   ChevronLeft, 
   RotateCcw, 
   CheckCircle2, 
-  AlertCircle, 
   Loader2, 
   ScanSearch, 
   Files, 
@@ -18,7 +18,6 @@ import {
   PenTool,
   Layers,
   Sparkles,
-  Globe,
   Key
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -525,24 +524,6 @@ export default function TableScanPro() {
                 </div>
               </div>
             </Card>
-
-            {status === 'completed' && (
-              <Card className="border-2 border-primary/20 bg-primary/5">
-                <CardHeader className="py-4">
-                  <CardTitle className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-secondary" /> Extraction Complete
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    Data has been extracted using the {engineConfig.type.toUpperCase()} engine. You can now export individual tables or refine the grid and re-run.
-                  </p>
-                  <Button variant="outline" className="w-full h-8 text-[10px] font-bold" onClick={() => setStatus('refining')}>
-                    RE-ADJUST GRIDS
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
           </aside>
         )}
       </main>

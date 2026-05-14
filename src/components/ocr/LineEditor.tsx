@@ -4,18 +4,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine, TableRegion, PreprocessingOptions, OcrEngineType, ExtractionStrategy } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, Settings2, BoxSelect, Cpu, Bot, PenTool, Layers, Grid } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, BoxSelect, Cpu, Bot, PenTool, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { 
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { detectLinesInSingleRegion, getPreprocessedPreview } from '@/lib/ocr/processor';
 import { useToast } from '@/hooks/use-toast';
