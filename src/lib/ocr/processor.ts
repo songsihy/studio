@@ -159,6 +159,8 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 
 /**
  * Detects grid lines using a hybrid approach with intelligent wireless-wired pruning.
+ * Logic: Priority is given to Wired lines. Wireless lines are used as logical guesses.
+ * If a Wired line and Wireless line are close and there is no text between them, Wired is reserved.
  */
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
@@ -200,7 +202,7 @@ export async function detectLinesInSingleRegion(
         let wirelessV: TableLine[] = [];
         let wirelessH: TableLine[] = [];
 
-        // 1. Wired Detection
+        // 1. Wired Pass (Physical Borders)
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 25))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
@@ -208,7 +210,7 @@ export async function detectLinesInSingleRegion(
         for (let j = 0; j < vMat.cols; j++) {
           let count = 0;
           for (let i = 0; i < vMat.rows; i++) if (vMat.ucharAt(i, j) > 0) count++;
-          if (count > h * 0.45) {
+          if (count > h * 0.4) {
             wiredV.push({ id: `w-v-${j}`, type: 'vertical', position: (j / vMat.cols) * 100 });
           }
         }
@@ -220,12 +222,12 @@ export async function detectLinesInSingleRegion(
         for (let i = 0; i < hMat.rows; i++) {
           let count = 0;
           for (let j = 0; j < hMat.cols; j++) if (hMat.ucharAt(i, j) > 0) count++;
-          if (count > w * 0.45) {
+          if (count > w * 0.4) {
             wiredH.push({ id: `w-h-${i}`, type: 'horizontal', position: (i / hMat.rows) * 100 });
           }
         }
 
-        // 2. Tesseract Layout Analysis (Wireless)
+        // 2. Wireless Pass (Logical Layout via Tesseract)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
@@ -233,19 +235,20 @@ export async function detectLinesInSingleRegion(
         const { data } = await worker.recognize(tempCanvas);
         const wordBoxes = data.words.map((w: any) => w.bbox);
 
+        // Occupancy mapping for pruning logic
         const xOccupancy = new Array(w).fill(false);
         const yOccupancy = new Array(h).fill(false);
         wordBoxes.forEach((box: any) => {
-          for (let i = box.x0; i < box.x1; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
-          for (let i = box.y0; i < box.y1; i++) if (i >= 0 && i < h) yOccupancy[i] = true;
+          for (let i = Math.floor(box.x0); i < Math.ceil(box.x1); i++) if (i >= 0 && i < w) xOccupancy[i] = true;
+          for (let i = Math.floor(box.y0); i < Math.ceil(box.y1); i++) if (i >= 0 && i < h) yOccupancy[i] = true;
         });
 
-        // Wireless Verticals
+        // Detect Wireless Verticals (Column Gutters)
         findGapsInOccupancy(xOccupancy, 1).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
 
-        // Wireless Horizontals (via clustering)
+        // Detect Wireless Horizontals (Row Gutters via clustering)
         const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
         const rows: any[][] = [];
         if (sortedWords.length > 0) {
@@ -266,30 +269,36 @@ export async function detectLinesInSingleRegion(
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // 3. PRUNING: If no text between Wireless and Wired, discard the Wired line
-        const filteredWiredV = wiredV.filter(wv => {
-          const closestWL = wirelessV.reduce((prev, curr) => 
-            Math.abs(curr.position - wv.position) < Math.abs(prev.position - wv.position) ? curr : prev, 
-            wirelessV[0] || { position: -1000 }
+        // 3. MERGE LOGIC: Reserve Wired Line First
+        // For every wireless line, if it's near a wired line and no text is between them, discard the wireless one.
+        const filteredWirelessV = wirelessV.filter(wlv => {
+          const closestWired = wiredV.reduce((prev, curr) => 
+            Math.abs(curr.position - wlv.position) < Math.abs(prev.position - wlv.position) ? curr : prev, 
+            wiredV[0] || null
           );
-          if (closestWL.position < 0) return true;
-          const start = Math.min(wv.position, closestWL.position) * w / 100;
-          const end = Math.max(wv.position, closestWL.position) * w / 100;
+          if (!closestWired) return true;
+          if (Math.abs(closestWired.position - wlv.position) > 1.5) return true;
+          
+          // Check if there's any text between wired and wireless
+          const start = Math.min(wlv.position, closestWired.position) * w / 100;
+          const end = Math.max(wlv.position, closestWired.position) * w / 100;
           let hasText = false;
           for (let i = Math.floor(start); i < Math.ceil(end); i++) {
             if (i >= 0 && i < w && xOccupancy[i]) { hasText = true; break; }
           }
-          return hasText; 
+          return hasText; // If no text between, we keep only the Wired (filter returns false)
         });
 
-        const filteredWiredH = wiredH.filter(wh => {
-          const closestWL = wirelessH.reduce((prev, curr) => 
-            Math.abs(curr.position - wh.position) < Math.abs(prev.position - wh.position) ? curr : prev, 
-            wirelessH[0] || { position: -1000 }
+        const filteredWirelessH = wirelessH.filter(wlh => {
+          const closestWired = wiredH.reduce((prev, curr) => 
+            Math.abs(curr.position - wlh.position) < Math.abs(prev.position - wlh.position) ? curr : prev, 
+            wiredH[0] || null
           );
-          if (closestWL.position < 0) return true;
-          const start = Math.min(wh.position, closestWL.position) * h / 100;
-          const end = Math.max(wh.position, closestWL.position) * h / 100;
+          if (!closestWired) return true;
+          if (Math.abs(closestWired.position - wlh.position) > 1.5) return true;
+
+          const start = Math.min(wlh.position, closestWired.position) * h / 100;
+          const end = Math.max(wlh.position, closestWired.position) * h / 100;
           let hasText = false;
           for (let i = Math.floor(start); i < Math.ceil(end); i++) {
             if (i >= 0 && i < h && yOccupancy[i]) { hasText = true; break; }
@@ -297,9 +306,9 @@ export async function detectLinesInSingleRegion(
           return hasText;
         });
 
-        // 4. Final Merge
-        let finalV = mergeCloseLines([...filteredWiredV, ...wirelessV], 1.2);
-        let finalH = mergeCloseLines([...filteredWiredH, ...wirelessH], 1.2);
+        // 4. Final Aggregation
+        let finalV = mergeCloseLines([...wiredV, ...filteredWirelessV], 1.2);
+        let finalH = mergeCloseLines([...wiredH, ...filteredWirelessH], 1.2);
 
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
