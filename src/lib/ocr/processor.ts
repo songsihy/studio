@@ -121,6 +121,7 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
  * Detects grid lines using a hybrid approach:
  * 1. OpenCV Morphological Analysis (Wired Lines)
  * 2. Tesseract Layout Analysis (Wireless Lines via text block clustering)
+ * 3. Whitespace Gap Detection (Fallback for empty/sparse areas)
  */
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
@@ -164,7 +165,7 @@ export async function detectLinesInSingleRegion(
             const box = cv.minAreaRect(points);
             let angle = box.angle;
             if (angle < -45) angle = angle + 90;
-            if (Math.abs(angle) > 0.5) {
+            if (Math.abs(angle) > 0.4) {
               const center = new cv.Point(gray.cols / 2, gray.rows / 2);
               const M = cv.getRotationMatrix2D(center, angle, 1.0);
               cv.warpAffine(gray, gray, M, new cv.Size(gray.cols, gray.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
@@ -221,12 +222,12 @@ export async function detectLinesInSingleRegion(
         const wordBoxes = data.words.map((w: any) => w.bbox);
 
         if (wordBoxes.length > 0) {
-          // Vertical Wireless (Columns) via X-Occupancy
+          // Vertical Wireless
           const xOccupancy = new Array(w).fill(false);
           wordBoxes.forEach((box: any) => {
             for (let i = box.x0; i < box.x1; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
           });
-          const vGaps = findGapsInOccupancy(xOccupancy, Math.max(2, Math.floor(w * 0.005)));
+          const vGaps = findGapsInOccupancy(xOccupancy, Math.max(1, Math.floor(w * 0.003)));
           vGaps.forEach(gapCenter => {
             const pos = (gapCenter / w) * 100;
             if (pos > 0.5 && pos < 99.5 && !vLines.some(l => Math.abs(l.position - pos) < 1.0)) {
@@ -234,8 +235,7 @@ export async function detectLinesInSingleRegion(
             }
           });
 
-          // Horizontal Wireless (Rows) - IMPROVED CLUSTERING APPROACH
-          // Sort boxes by their Y-center
+          // Horizontal Wireless (Rows) - CLUSTERING + WHITESPACE MERGE
           const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
           const rows: any[][] = [];
           if (sortedWords.length > 0) {
@@ -243,13 +243,10 @@ export async function detectLinesInSingleRegion(
             for (let i = 1; i < sortedWords.length; i++) {
               const word = sortedWords[i];
               const prevWord = currentCluster[currentCluster.length - 1];
-              
-              // Heuristic: Group words if they overlap significantly or are very close vertically
               const wordH = word.y1 - word.y0;
               const overlap = Math.min(word.y1, prevWord.y1) - Math.max(word.y0, prevWord.y0);
               const verticalDist = Math.abs((word.y0 + word.y1) / 2 - (prevWord.y0 + prevWord.y1) / 2);
-
-              if (overlap > wordH * 0.4 || verticalDist < wordH * 0.6) {
+              if (overlap > wordH * 0.3 || verticalDist < wordH * 0.5) {
                 currentCluster.push(word);
               } else {
                 rows.push(currentCluster);
@@ -259,23 +256,36 @@ export async function detectLinesInSingleRegion(
             rows.push(currentCluster);
           }
 
-          // Place horizontal lines in the gutters between these detected row clusters
+          // Place lines between row clusters at the midpoint of whitespace
           for (let i = 0; i < rows.length - 1; i++) {
-            const upperRow = rows[i];
-            const lowerRow = rows[i + 1];
-            
-            const upperY1 = Math.max(...upperRow.map(w => w.y1));
-            const lowerY0 = Math.min(...lowerRow.map(w => w.y0));
-            
-            // Place line at the center of the vertical gap
+            const upperY1 = Math.max(...rows[i].map(w => w.y1));
+            const lowerY0 = Math.min(...rows[i + 1].map(w => w.y0));
             const boundaryY = (upperY1 + lowerY0) / 2;
             const pos = (boundaryY / h) * 100;
-            
-            if (pos > 0.1 && pos < 99.9 && !hLines.some(l => Math.abs(l.position - pos) < 0.4)) {
+            if (pos > 0.1 && pos < 99.9 && !hLines.some(l => Math.abs(l.position - pos) < 0.3)) {
               hLines.push({ id: `layout-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
             }
           }
         }
+
+        // --- 3. Pure Whitespace Fallback (For empty/sparse grids) ---
+        // This handles cases where Tesseract misses content, symbols, or there's an empty row
+        const yOccupancy = new Array(h).fill(false);
+        for (let i = 0; i < h; i++) {
+          let count = 0;
+          for (let j = 0; j < w; j++) if (thresh.ucharAt(i, j) > 0) count++;
+          // High sensitivity density check
+          if (count > w * 0.005) yOccupancy[i] = true;
+        }
+        
+        const hGaps = findGapsInOccupancy(yOccupancy, Math.max(1, Math.floor(h * 0.005)));
+        hGaps.forEach(gapCenter => {
+          const pos = (gapCenter / h) * 100;
+          // Only add if not already close to a layout-detected line (avoid duplicates)
+          if (pos > 0.5 && pos < 99.5 && !hLines.some(l => Math.abs(l.position - pos) < 1.0)) {
+            hLines.push({ id: `ws-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
+          }
+        });
 
         // Cleanup
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
