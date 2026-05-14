@@ -93,15 +93,15 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
 }
 
 /**
- * Detects grid lines within multiple regions.
+ * Detects grid lines within multiple regions using specified language context.
  */
-export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[]): Promise<TableRegion[]> {
+export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[], language: string = 'eng'): Promise<TableRegion[]> {
   const updatedRegions: TableRegion[] = [];
-  const worker = await createWorker('eng');
+  const worker = await createWorker(language);
   
   for (const region of regions) {
     try {
-      const { vLines, hLines } = await detectLinesInSingleRegion(imageSrc, region, worker);
+      const { vLines, hLines } = await detectLinesInSingleRegion(imageSrc, region, language, worker);
       updatedRegions.push({
         ...region,
         verticalLines: vLines,
@@ -118,8 +118,9 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 }
 
 /**
- * Groups lines that are within a certain threshold and picks the rightmost position 
- * to consolidate clusters.
+ * Consolidates clustered lines into a single logical line.
+ * Prioritizes physical Wired lines over Wireless guesses.
+ * Within a cluster, favors the rightmost line if no wired lines exist.
  */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
@@ -136,24 +137,34 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
     if (line.position - lastInGroup.position < threshold) {
       currentGroup.push(line);
     } else {
-      const rightmost = currentGroup[currentGroup.length - 1];
-      merged.push(rightmost);
+      merged.push(selectBestInGroup(currentGroup));
       currentGroup = [line];
     }
   }
   
-  const rightmost = currentGroup[currentGroup.length - 1];
-  merged.push(rightmost);
+  merged.push(selectBestInGroup(currentGroup));
   
   return merged;
 }
 
+function selectBestInGroup(group: TableLine[]): TableLine {
+  // If any line in the cluster is a Wired line (starts with 'w-'), we MUST reserve it.
+  const wiredLines = group.filter(l => l.id.startsWith('w-'));
+  if (wiredLines.length > 0) {
+    // Favor the rightmost physical border if multiple exist in the cluster
+    return wiredLines[wiredLines.length - 1];
+  }
+  // Otherwise, drop redundant left lines and pick the rightmost wireless guess
+  return group[group.length - 1];
+}
+
 /**
- * Detects grid lines using a hybrid approach.
+ * Detects grid lines using a hybrid layout-aware approach.
  */
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
   region: TableRegion, 
+  language: string = 'eng',
   existingWorker?: any
 ): Promise<{ vLines: TableLine[], hLines: TableLine[] }> {
   return new Promise(async (resolve) => {
@@ -191,7 +202,7 @@ export async function detectLinesInSingleRegion(
         let wirelessV: TableLine[] = [];
         let wirelessH: TableLine[] = [];
 
-        // 1. Wired Pass (Physical Borders)
+        // 1. Wired Pass (Physical borders detection)
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 30))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
@@ -216,23 +227,24 @@ export async function detectLinesInSingleRegion(
           }
         }
 
-        // 2. Wireless Pass (Layout Analysis)
+        // 2. Wireless Pass (Layout analysis via OCR word positions)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
-        const worker = existingWorker || await createWorker('eng');
+        const worker = existingWorker || await createWorker(language);
         const { data } = await worker.recognize(tempCanvas);
         const wordBoxes = data.words.map((w: any) => w.bbox);
 
+        // Analyze vertical gaps between word boxes
         const xOccupancy = new Array(w).fill(false);
         wordBoxes.forEach((box: any) => {
           for (let i = Math.floor(box.x0); i < Math.ceil(box.x1); i++) if (i >= 0 && i < w) xOccupancy[i] = true;
         });
-
         findGapsInOccupancy(xOccupancy, 1).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
 
+        // Analyze horizontal gaps between rows (clustering words into logical lines)
         const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
         const rows: any[][] = [];
         if (sortedWords.length > 0) {
@@ -253,7 +265,8 @@ export async function detectLinesInSingleRegion(
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // 3. AGGREGATION
+        // 3. Consolidation: Mix wired and wireless into one clean grid
+        // Dropping left redundant lines and reserving physical lines.
         let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
         let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
 
@@ -293,7 +306,7 @@ function findGapsInOccupancy(occupancy: boolean[], minWidth: number): number[] {
 }
 
 /**
- * Advanced image pre-processing.
+ * Advanced image pre-processing for Tesseract OCR.
  */
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
@@ -397,7 +410,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
 }
 
 /**
- * Process extraction for a whole page of tables.
+ * Process extraction for a whole page of tables using Step 3's layout hints.
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -445,7 +458,7 @@ export async function processTablesOnPage(
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
 
     if (isTesseract) {
-      // Single-Pass Strategy for Tesseract
+      // Single-Pass Strategy for Tesseract: Assign detected words to grid cells
       const { data } = await worker.recognize(tempCanvas);
       data.words.forEach((word: any) => {
         const centerX = (word.bbox.x0 + word.bbox.x1) / 2;

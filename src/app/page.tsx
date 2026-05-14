@@ -186,10 +186,11 @@ export default function TableScanPro() {
     setStatus('detecting');
     try {
       const updatedPages = [...pages];
+      const langStr = selectedLangs.join('+');
       for (let i = 0; i < updatedPages.length; i++) {
         const page = updatedPages[i];
         if (page.tableRegions.length > 0) {
-          const regionsWithLines = await detectLinesInRegions(page.originalImage, page.tableRegions);
+          const regionsWithLines = await detectLinesInRegions(page.originalImage, page.tableRegions, langStr);
           updatedPages[i] = { ...page, tableRegions: regionsWithLines };
         }
       }
@@ -303,7 +304,6 @@ export default function TableScanPro() {
         </div>
         
         <div className="flex items-center gap-4">
-          {/* Engine & Settings Popover */}
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" className="h-10 gap-2 bg-card shadow-sm">
@@ -440,7 +440,7 @@ export default function TableScanPro() {
                     {pages.map((page, pIdx) => (
                       <React.Fragment key={page.id}>
                         {(page.tableRegions || []).map((region, rIdx) => (
-                          <LineEditor key={region.id} title={`${region.name || `Table ${rIdx + 1}`} (Page ${pIdx + 1})`} imageSrc={page.originalImage} cropRect={region} vLines={region.verticalLines || []} hLines={region.horizontalLines || []} onLinesChange={(v, h) => updateRegionLines(region.id, v, h)} onPreprocessingChange={(opts) => updateRegionPreprocessing(region.id, opts)} />
+                          <LineEditor key={region.id} title={`${region.name || `Table ${rIdx + 1}`} (Page ${pIdx + 1})`} language={selectedLangs.join('+')} imageSrc={page.originalImage} cropRect={region} vLines={region.verticalLines || []} hLines={region.horizontalLines || []} onLinesChange={(v, h) => updateRegionLines(region.id, v, h)} onPreprocessingChange={(opts) => updateRegionPreprocessing(region.id, opts)} />
                         ))}
                       </React.Fragment>
                     ))}

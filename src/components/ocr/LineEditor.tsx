@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -27,6 +28,7 @@ interface LineEditorProps {
   onLinesChange: (vLines: TableLine[], hLines: TableLine[]) => void;
   onPreprocessingChange?: (options: PreprocessingOptions) => void;
   title: string;
+  language?: string;
 }
 
 export const LineEditor: React.FC<LineEditorProps> = ({ 
@@ -36,7 +38,8 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   hLines, 
   onLinesChange,
   onPreprocessingChange,
-  title
+  title,
+  language = 'eng'
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState<{ id: string; type: 'v' | 'h' } | null>(null);
@@ -127,7 +130,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     if (!imageSrc) return;
     setIsDetecting(true);
     try {
-      const { vLines: newV, hLines: newH } = await detectLinesInSingleRegion(imageSrc, cropRect);
+      const { vLines: newV, hLines: newH } = await detectLinesInSingleRegion(imageSrc, cropRect, language);
       onLinesChange(newV, newH);
       toast({
         title: "Grid Detected",
