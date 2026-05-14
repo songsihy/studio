@@ -118,6 +118,48 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 }
 
 /**
+ * Groups lines that are within a certain threshold and averages their positions.
+ */
+function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
+  if (lines.length === 0) return [];
+  
+  // Sort by position
+  const sorted = [...lines].sort((a, b) => a.position - b.position);
+  const merged: TableLine[] = [];
+  
+  let currentGroup: TableLine[] = [sorted[0]];
+  
+  for (let i = 1; i < sorted.length; i++) {
+    const line = sorted[i];
+    const lastInGroup = currentGroup[currentGroup.length - 1];
+    
+    // Check distance between current line and the last line in the group
+    if (line.position - lastInGroup.position < threshold) {
+      currentGroup.push(line);
+    } else {
+      // Average the positions in the current group
+      const avgPos = currentGroup.reduce((acc, l) => acc + l.position, 0) / currentGroup.length;
+      merged.push({
+        id: currentGroup[0].id,
+        type: currentGroup[0].type,
+        position: avgPos
+      });
+      currentGroup = [line];
+    }
+  }
+  
+  // Merge final group
+  const avgPos = currentGroup.reduce((acc, l) => acc + l.position, 0) / currentGroup.length;
+  merged.push({
+    id: currentGroup[0].id,
+    type: currentGroup[0].type,
+    position: avgPos
+  });
+  
+  return merged;
+}
+
+/**
  * Detects grid lines using a hybrid approach:
  * 1. OpenCV Morphological Analysis (Wired Lines)
  * 2. Tesseract Layout Analysis (Wireless Lines via text block clustering)
@@ -155,60 +197,58 @@ export async function detectLinesInSingleRegion(
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
 
-        // Deskew attempt
-        const threshForSkew = new cv.Mat();
-        cv.threshold(gray, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-        const points = new cv.Mat();
-        if (cv.findNonZero) {
-          cv.findNonZero(threshForSkew, points);
-          if (!points.empty()) {
-            const box = cv.minAreaRect(points);
-            let angle = box.angle;
-            if (angle < -45) angle = angle + 90;
-            if (Math.abs(angle) > 0.4) {
-              const center = new cv.Point(gray.cols / 2, gray.rows / 2);
-              const M = cv.getRotationMatrix2D(center, angle, 1.0);
-              cv.warpAffine(gray, gray, M, new cv.Size(gray.cols, gray.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
-              M.delete();
+        // Deskew attempt with safety check
+        if (cv.findNonZero && cv.minAreaRect) {
+          const threshForSkew = new cv.Mat();
+          cv.threshold(gray, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+          const points = new cv.Mat();
+          try {
+            cv.findNonZero(threshForSkew, points);
+            if (!points.empty()) {
+              const box = cv.minAreaRect(points);
+              let angle = box.angle;
+              if (angle < -45) angle = angle + 90;
+              if (Math.abs(angle) > 0.4) {
+                const center = new cv.Point(gray.cols / 2, gray.rows / 2);
+                const M = cv.getRotationMatrix2D(center, angle, 1.0);
+                cv.warpAffine(gray, gray, M, new cv.Size(gray.cols, gray.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+                M.delete();
+              }
             }
-          }
+          } catch (e) { console.warn("Deskewing skip:", e); }
+          threshForSkew.delete(); points.delete();
         }
-        threshForSkew.delete(); points.delete();
 
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-        const vLines: TableLine[] = [];
-        const hLines: TableLine[] = [];
+        let vLines: TableLine[] = [];
+        let hLines: TableLine[] = [];
 
         // --- 1. Morphological Wired Detection ---
-        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 30))));
+        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 25))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
         cv.dilate(vMat, vMat, vKernel);
         for (let j = 0; j < vMat.cols; j++) {
           let count = 0;
           for (let i = 0; i < vMat.rows; i++) if (vMat.ucharAt(i, j) > 0) count++;
-          if (count > h * 0.4) {
+          if (count > h * 0.45) {
             const pos = (j / vMat.cols) * 100;
-            if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 1.5) {
-              vLines.push({ id: `wired-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
-            }
+            vLines.push({ id: `wired-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
           }
         }
 
-        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.max(2, Math.floor(w / 30)), 1));
+        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.max(2, Math.floor(w / 25)), 1));
         const hMat = new cv.Mat();
         cv.erode(thresh, hMat, hKernel);
         cv.dilate(hMat, hMat, hKernel);
         for (let i = 0; i < hMat.rows; i++) {
           let count = 0;
           for (let j = 0; j < hMat.cols; j++) if (hMat.ucharAt(i, j) > 0) count++;
-          if (count > w * 0.4) {
+          if (count > w * 0.45) {
             const pos = (i / hMat.rows) * 100;
-            if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 1.5) {
-              hLines.push({ id: `wired-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
-            }
+            hLines.push({ id: `wired-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
           }
         }
 
@@ -227,15 +267,13 @@ export async function detectLinesInSingleRegion(
           wordBoxes.forEach((box: any) => {
             for (let i = box.x0; i < box.x1; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
           });
-          const vGaps = findGapsInOccupancy(xOccupancy, Math.max(1, Math.floor(w * 0.003)));
+          const vGaps = findGapsInOccupancy(xOccupancy, Math.max(1, Math.floor(w * 0.002)));
           vGaps.forEach(gapCenter => {
             const pos = (gapCenter / w) * 100;
-            if (pos > 0.5 && pos < 99.5 && !vLines.some(l => Math.abs(l.position - pos) < 1.0)) {
-              vLines.push({ id: `layout-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
-            }
+            vLines.push({ id: `layout-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
           });
 
-          // Horizontal Wireless (Rows) - CLUSTERING + WHITESPACE MERGE
+          // Horizontal Wireless (Rows) - Clustering Logic
           const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
           const rows: any[][] = [];
           if (sortedWords.length > 0) {
@@ -256,38 +294,38 @@ export async function detectLinesInSingleRegion(
             rows.push(currentCluster);
           }
 
-          // Place lines between row clusters at the midpoint of whitespace
           for (let i = 0; i < rows.length - 1; i++) {
             const upperY1 = Math.max(...rows[i].map(w => w.y1));
             const lowerY0 = Math.min(...rows[i + 1].map(w => w.y0));
             const boundaryY = (upperY1 + lowerY0) / 2;
             const pos = (boundaryY / h) * 100;
-            if (pos > 0.1 && pos < 99.9 && !hLines.some(l => Math.abs(l.position - pos) < 0.3)) {
-              hLines.push({ id: `layout-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
-            }
+            hLines.push({ id: `layout-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
           }
         }
 
-        // --- 3. Pure Whitespace Fallback (For empty/sparse grids) ---
-        // This handles cases where Tesseract misses content, symbols, or there's an empty row
+        // --- 3. Pure Whitespace Fallback ---
         const yOccupancy = new Array(h).fill(false);
         for (let i = 0; i < h; i++) {
           let count = 0;
           for (let j = 0; j < w; j++) if (thresh.ucharAt(i, j) > 0) count++;
-          // High sensitivity density check
           if (count > w * 0.005) yOccupancy[i] = true;
         }
-        
-        const hGaps = findGapsInOccupancy(yOccupancy, Math.max(1, Math.floor(h * 0.005)));
+        const hGaps = findGapsInOccupancy(yOccupancy, 1);
         hGaps.forEach(gapCenter => {
           const pos = (gapCenter / h) * 100;
-          // Only add if not already close to a layout-detected line (avoid duplicates)
-          if (pos > 0.5 && pos < 99.5 && !hLines.some(l => Math.abs(l.position - pos) < 1.0)) {
-            hLines.push({ id: `ws-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
-          }
+          hLines.push({ id: `ws-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
         });
 
-        // Cleanup
+        // --- 4. Final Merging and Cleaning ---
+        // Threshold: merge lines within 1.2% of each other
+        vLines = mergeCloseLines(vLines, 1.2);
+        hLines = mergeCloseLines(hLines, 1.2);
+
+        // Keep lines away from extreme edges
+        vLines = vLines.filter(l => l.position > 0.5 && l.position < 99.5);
+        hLines = hLines.filter(l => l.position > 0.5 && l.position < 99.5);
+
+        // Cleanup OpenCV
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
         if (!existingWorker) await worker.terminate();
