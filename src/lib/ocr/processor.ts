@@ -118,7 +118,8 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 }
 
 /**
- * Groups lines that are within a certain threshold and averages their positions.
+ * Groups lines that are within a certain threshold and picks the rightmost position 
+ * to "drop the left lines" in redundant clusters.
  */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
@@ -126,8 +127,6 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   const sorted = [...lines].sort((a, b) => a.position - b.position);
   const merged: TableLine[] = [];
   
-  if (sorted.length === 0) return [];
-
   let currentGroup: TableLine[] = [sorted[0]];
   
   for (let i = 1; i < sorted.length; i++) {
@@ -137,30 +136,22 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
     if (line.position - lastInGroup.position < threshold) {
       currentGroup.push(line);
     } else {
-      const avgPos = currentGroup.reduce((acc, l) => acc + l.position, 0) / currentGroup.length;
-      merged.push({
-        id: currentGroup[0].id,
-        type: currentGroup[0].type,
-        position: avgPos
-      });
+      // "Drop the left line": Pick the rightmost position in the cluster
+      const rightmost = currentGroup[currentGroup.length - 1];
+      merged.push(rightmost);
       currentGroup = [line];
     }
   }
   
-  const avgPos = currentGroup.reduce((acc, l) => acc + l.position, 0) / currentGroup.length;
-  merged.push({
-    id: currentGroup[0].id,
-    type: currentGroup[0].type,
-    position: avgPos
-  });
+  const rightmost = currentGroup[currentGroup.length - 1];
+  merged.push(rightmost);
   
   return merged;
 }
 
 /**
  * Detects grid lines using a hybrid approach with intelligent wireless-wired pruning.
- * Logic: Priority is given to Wired lines. Wireless lines are used as logical guesses.
- * If a Wired line and Wireless line are close and there is no text between them, Wired is reserved.
+ * Priority: Reserve Wired line first, but drop it if it's redundant to a logical Wireless gap with no text between.
  */
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
@@ -269,36 +260,38 @@ export async function detectLinesInSingleRegion(
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // 3. MERGE LOGIC: Reserve Wired Line First
-        // For every wireless line, if it's near a wired line and no text is between them, discard the wireless one.
-        const filteredWirelessV = wirelessV.filter(wlv => {
-          const closestWired = wiredV.reduce((prev, curr) => 
-            Math.abs(curr.position - wlv.position) < Math.abs(prev.position - wlv.position) ? curr : prev, 
-            wiredV[0] || null
+        // 3. PRUNING LOGIC: "Reserve Wired line first", but "Drop wired if no text between wired and wireless"
+        // Also: "Its are clusters of redundant lines, the left line should drop"
+        
+        // Filter out Wired lines that are redundant to logical Wireless gaps with no content between them
+        const filteredWiredV = wiredV.filter(wv => {
+          const closestWireless = wirelessV.reduce((prev, curr) => 
+            Math.abs(curr.position - wv.position) < Math.abs(prev.position - wv.position) ? curr : prev, 
+            wirelessV[0] || null
           );
-          if (!closestWired) return true;
-          if (Math.abs(closestWired.position - wlv.position) > 1.5) return true;
+          if (!closestWireless) return true;
+          if (Math.abs(closestWireless.position - wv.position) > 2.0) return true;
           
-          // Check if there's any text between wired and wireless
-          const start = Math.min(wlv.position, closestWired.position) * w / 100;
-          const end = Math.max(wlv.position, closestWired.position) * w / 100;
+          const start = Math.min(wv.position, closestWireless.position) * w / 100;
+          const end = Math.max(wv.position, closestWireless.position) * w / 100;
           let hasText = false;
           for (let i = Math.floor(start); i < Math.ceil(end); i++) {
             if (i >= 0 && i < w && xOccupancy[i]) { hasText = true; break; }
           }
-          return hasText; // If no text between, we keep only the Wired (filter returns false)
+          // If NO text between them, don't want this wired line (return false)
+          return hasText;
         });
 
-        const filteredWirelessH = wirelessH.filter(wlh => {
-          const closestWired = wiredH.reduce((prev, curr) => 
-            Math.abs(curr.position - wlh.position) < Math.abs(prev.position - wlh.position) ? curr : prev, 
-            wiredH[0] || null
+        const filteredWiredH = wiredH.filter(wh => {
+          const closestWireless = wirelessH.reduce((prev, curr) => 
+            Math.abs(curr.position - wh.position) < Math.abs(prev.position - wh.position) ? curr : prev, 
+            wirelessH[0] || null
           );
-          if (!closestWired) return true;
-          if (Math.abs(closestWired.position - wlh.position) > 1.5) return true;
+          if (!closestWireless) return true;
+          if (Math.abs(closestWireless.position - wh.position) > 2.0) return true;
 
-          const start = Math.min(wlh.position, closestWired.position) * h / 100;
-          const end = Math.max(wlh.position, closestWired.position) * h / 100;
+          const start = Math.min(wh.position, closestWireless.position) * h / 100;
+          const end = Math.max(wh.position, closestWireless.position) * h / 100;
           let hasText = false;
           for (let i = Math.floor(start); i < Math.ceil(end); i++) {
             if (i >= 0 && i < h && yOccupancy[i]) { hasText = true; break; }
@@ -306,9 +299,9 @@ export async function detectLinesInSingleRegion(
           return hasText;
         });
 
-        // 4. Final Aggregation
-        let finalV = mergeCloseLines([...wiredV, ...filteredWirelessV], 1.2);
-        let finalH = mergeCloseLines([...wiredH, ...filteredWirelessH], 1.2);
+        // 4. Final Aggregation with "Drop-Left" Merging
+        let finalV = mergeCloseLines([...filteredWiredV, ...wirelessV], 1.5);
+        let finalH = mergeCloseLines([...filteredWiredH, ...wirelessH], 1.5);
 
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
