@@ -1,3 +1,4 @@
+
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -143,9 +144,29 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         const roi = src.roi(new cv.Rect(x, y, w, h));
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
+
+        // --- 0. Quick Deskew for detection accuracy ---
+        const threshForSkew = new cv.Mat();
+        cv.threshold(gray, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+        const points = new cv.Mat();
+        cv.findNonZero(threshForSkew, points);
+        let detectionGray = gray.clone();
+        if (!points.empty()) {
+          const box = cv.minAreaRect(points);
+          let angle = box.angle;
+          if (angle < -45) angle = angle + 90;
+          if (Math.abs(angle) > 0.5) {
+            const center = new cv.Point(gray.cols / 2, gray.rows / 2);
+            const M = cv.getRotationMatrix2D(center, angle, 1.0);
+            cv.warpAffine(gray, detectionGray, M, new cv.Size(gray.cols, gray.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+            M.delete();
+          }
+        }
+        threshForSkew.delete();
+        points.delete();
         
         const thresh = new cv.Mat();
-        cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+        cv.adaptiveThreshold(detectionGray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
         // --- 1. Morphological Detection (Wired Lines) ---
         const vLines: TableLine[] = [];
@@ -190,7 +211,7 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
 
         // --- 2. Directional Smearing & Projection Analysis (Wireless Detection) ---
         
-        // 2a. Horizontal Projection (Finding Rows) - Smear VERTICALLY to close vertical gaps
+        // 2a. Horizontal Projection (Finding Rows)
         const hSmeared = new cv.Mat();
         const hSmearKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(2, 5));
         cv.dilate(thresh, hSmeared, hSmearKernel);
@@ -209,12 +230,12 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         const hGaps = findGaps(smoothedH, hMinWidth, hGapThreshold);
         hGaps.forEach(gapCenter => {
           const pos = (gapCenter / hSmeared.rows) * 100;
-          if (!hLines.some(l => Math.abs(l.position - pos) < 3)) {
+          if (pos > 1 && pos < 99 && !hLines.some(l => Math.abs(l.position - pos) < 3)) {
             hLines.push({ id: `wireless-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
           }
         });
 
-        // Heuristic: Estimate "Font Height" to scale column smearing
+        // Heuristic: Estimate "Font Height"
         let avgRowHeight = 10;
         if (hLines.length > 1) {
           const gaps = [];
@@ -223,9 +244,9 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         }
 
         // 2b. Vertical Projection (Finding Columns)
-        // Smear HORIZONTALLY more aggressively based on estimated font scale to bridge chars/words
+        // Aggressive horizontal smearing to close gaps between characters in a word
         const vSmeared = new cv.Mat();
-        const smearWidth = Math.max(5, Math.floor(avgRowHeight * 0.8)); // Use row height as a guide for word spacing
+        const smearWidth = Math.max(8, Math.floor(avgRowHeight * 1.5)); 
         const vSmearKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(smearWidth, 2));
         cv.dilate(thresh, vSmeared, vSmearKernel);
 
@@ -236,22 +257,22 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
           }
         }
 
-        const smoothedV = smoothArray(vProjection, 5);
-        // Ultra-sensitive threshold for columns (1% ink density)
-        const vGapThreshold = vSmeared.rows * 0.01; 
+        const smoothedV = smoothArray(vProjection, 3);
+        // Ultra-sensitive threshold for wireless columns
+        const vGapThreshold = vSmeared.rows * 0.005; 
         const vMinWidth = Math.max(2, vSmeared.cols * 0.005); 
         
         const vGaps = findGaps(smoothedV, vMinWidth, vGapThreshold);
         vGaps.forEach(gapCenter => {
           const pos = (gapCenter / vSmeared.cols) * 100;
-          // Don't add if too close to an existing line or at the very edges
-          if (pos > 2 && pos < 98 && !vLines.some(l => Math.abs(l.position - pos) < 4)) {
+          // Ignore edges and avoid duplicate lines
+          if (pos > 3 && pos < 97 && !vLines.some(l => Math.abs(l.position - pos) < 4)) {
             vLines.push({ id: `wireless-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
           }
         });
 
         // Cleanup
-        src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
+        src.delete(); roi.delete(); gray.delete(); detectionGray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
         vSmeared.delete(); vSmearKernel.delete(); hSmeared.delete(); hSmearKernel.delete();
 
