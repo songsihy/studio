@@ -1,3 +1,4 @@
+
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -119,7 +120,7 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
 /**
  * Detects grid lines using a hybrid approach:
  * 1. OpenCV Morphological Analysis (Wired Lines)
- * 2. Tesseract Layout Analysis (Wireless Lines via word bounding boxes)
+ * 2. Tesseract Layout Analysis (Wireless Lines via text block clustering)
  */
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
@@ -153,6 +154,26 @@ export async function detectLinesInSingleRegion(
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
 
+        // Deskew attempt
+        const threshForSkew = new cv.Mat();
+        cv.threshold(gray, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+        const points = new cv.Mat();
+        if (cv.findNonZero) {
+          cv.findNonZero(threshForSkew, points);
+          if (!points.empty()) {
+            const box = cv.minAreaRect(points);
+            let angle = box.angle;
+            if (angle < -45) angle = angle + 90;
+            if (Math.abs(angle) > 0.5) {
+              const center = new cv.Point(gray.cols / 2, gray.rows / 2);
+              const M = cv.getRotationMatrix2D(center, angle, 1.0);
+              cv.warpAffine(gray, gray, M, new cv.Size(gray.cols, gray.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+              M.delete();
+            }
+          }
+        }
+        threshForSkew.delete(); points.delete();
+
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
@@ -160,74 +181,100 @@ export async function detectLinesInSingleRegion(
         const hLines: TableLine[] = [];
 
         // --- 1. Morphological Wired Detection ---
-        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 20))));
+        const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 30))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
         cv.dilate(vMat, vMat, vKernel);
         for (let j = 0; j < vMat.cols; j++) {
           let count = 0;
           for (let i = 0; i < vMat.rows; i++) if (vMat.ucharAt(i, j) > 0) count++;
-          if (count > h * 0.5) {
+          if (count > h * 0.4) {
             const pos = (j / vMat.cols) * 100;
-            if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 2) {
+            if (vLines.length === 0 || Math.abs(vLines[vLines.length - 1].position - pos) > 1.5) {
               vLines.push({ id: `wired-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
             }
           }
         }
 
-        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.max(2, Math.floor(w / 20)), 1));
+        const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(Math.max(2, Math.floor(w / 30)), 1));
         const hMat = new cv.Mat();
         cv.erode(thresh, hMat, hKernel);
         cv.dilate(hMat, hMat, hKernel);
         for (let i = 0; i < hMat.rows; i++) {
           let count = 0;
           for (let j = 0; j < hMat.cols; j++) if (hMat.ucharAt(i, j) > 0) count++;
-          if (count > w * 0.5) {
+          if (count > w * 0.4) {
             const pos = (i / hMat.rows) * 100;
-            if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 2) {
+            if (hLines.length === 0 || Math.abs(hLines[hLines.length - 1].position - pos) > 1.5) {
               hLines.push({ id: `wired-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
             }
           }
         }
 
-        // --- 2. Tesseract Layout Analysis (Wireless Guessing) ---
+        // --- 2. Tesseract Layout Pass (Wireless Extraction) ---
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
-        cv.imshow(tempCanvas, roi);
+        cv.imshow(tempCanvas, gray);
         
         const worker = existingWorker || await createWorker('eng');
         const { data } = await worker.recognize(tempCanvas);
         const wordBoxes = data.words.map((w: any) => w.bbox);
 
         if (wordBoxes.length > 0) {
-          // Vertical Wireless (Columns)
+          // Vertical Wireless (Columns) via X-Occupancy
           const xOccupancy = new Array(w).fill(false);
           wordBoxes.forEach((box: any) => {
             for (let i = box.x0; i < box.x1; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
           });
-          const vGaps = findGapsInOccupancy(xOccupancy, w * 0.01); // High sensitivity
+          const vGaps = findGapsInOccupancy(xOccupancy, Math.max(2, Math.floor(w * 0.005)));
           vGaps.forEach(gapCenter => {
             const pos = (gapCenter / w) * 100;
-            if (pos > 1 && pos < 99 && !vLines.some(l => Math.abs(l.position - pos) < 2)) {
+            if (pos > 0.5 && pos < 99.5 && !vLines.some(l => Math.abs(l.position - pos) < 1.0)) {
               vLines.push({ id: `layout-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
             }
           });
 
-          // Horizontal Wireless (Rows) - MAX SENSITIVITY
-          const yOccupancy = new Array(h).fill(false);
-          wordBoxes.forEach((box: any) => {
-            for (let i = box.y0; i < box.y1; i++) if (i >= 0 && i < h) yOccupancy[i] = true;
-          });
-          
-          // Ultra-aggressive gap detection: Look for even 1-pixel gutters
-          const hGaps = findGapsInOccupancy(yOccupancy, 1); 
-          hGaps.forEach(gapCenter => {
-            const pos = (gapCenter / h) * 100;
-            // Very tight proximity filter to capture frequent rows
-            if (pos > 0.3 && pos < 99.7 && !hLines.some(l => Math.abs(l.position - pos) < 0.5)) {
+          // Horizontal Wireless (Rows) - IMPROVED CLUSTERING APPROACH
+          // Sort boxes by their Y-center
+          const sortedWords = [...wordBoxes].sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
+          const rows: any[][] = [];
+          if (sortedWords.length > 0) {
+            let currentCluster = [sortedWords[0]];
+            for (let i = 1; i < sortedWords.length; i++) {
+              const word = sortedWords[i];
+              const prevWord = currentCluster[currentCluster.length - 1];
+              
+              // Heuristic: Group words if they overlap significantly or are very close vertically
+              const wordH = word.y1 - word.y0;
+              const overlap = Math.min(word.y1, prevWord.y1) - Math.max(word.y0, prevWord.y0);
+              const verticalDist = Math.abs((word.y0 + word.y1) / 2 - (prevWord.y0 + prevWord.y1) / 2);
+
+              if (overlap > wordH * 0.4 || verticalDist < wordH * 0.6) {
+                currentCluster.push(word);
+              } else {
+                rows.push(currentCluster);
+                currentCluster = [word];
+              }
+            }
+            rows.push(currentCluster);
+          }
+
+          // Place horizontal lines in the gutters between these detected row clusters
+          for (let i = 0; i < rows.length - 1; i++) {
+            const upperRow = rows[i];
+            const lowerRow = rows[i + 1];
+            
+            const upperY1 = Math.max(...upperRow.map(w => w.y1));
+            const lowerY0 = Math.min(...lowerRow.map(w => w.y0));
+            
+            // Place line at the center of the vertical gap
+            const boundaryY = (upperY1 + lowerY0) / 2;
+            const pos = (boundaryY / h) * 100;
+            
+            if (pos > 0.1 && pos < 99.9 && !hLines.some(l => Math.abs(l.position - pos) < 0.4)) {
               hLines.push({ id: `layout-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
             }
-          });
+          }
         }
 
         // Cleanup
