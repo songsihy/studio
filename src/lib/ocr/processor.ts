@@ -96,7 +96,6 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
  */
 export async function detectLinesInRegions(imageSrc: string, regions: TableRegion[]): Promise<TableRegion[]> {
   const updatedRegions: TableRegion[] = [];
-  // Use a single worker for all detection passes to improve speed
   const worker = await createWorker('eng');
   
   for (const region of regions) {
@@ -121,7 +120,6 @@ export async function detectLinesInRegions(imageSrc: string, regions: TableRegio
  * Detects grid lines using a hybrid approach:
  * 1. OpenCV Morphological Analysis (Wired Lines)
  * 2. Tesseract Layout Analysis (Wireless Lines via word bounding boxes)
- * 3. Pixel Density Projections (Safety Fallback)
  */
 export async function detectLinesInSingleRegion(
   imageSrc: string, 
@@ -155,7 +153,6 @@ export async function detectLinesInSingleRegion(
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
 
-        // Pre-cleaning for detection
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
@@ -193,8 +190,7 @@ export async function detectLinesInSingleRegion(
           }
         }
 
-        // --- 2. Tesseract Layout Analysis (The Hybrid Fix) ---
-        // We use text bounding boxes to find the true whitespace gutters
+        // --- 2. Tesseract Layout Analysis (Wireless Guessing) ---
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, roi);
@@ -209,23 +205,25 @@ export async function detectLinesInSingleRegion(
           wordBoxes.forEach((box: any) => {
             for (let i = box.x0; i < box.x1; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
           });
-          const vGaps = findGapsInOccupancy(xOccupancy, w * 0.02); // 2% width minimum gutter
+          const vGaps = findGapsInOccupancy(xOccupancy, w * 0.015); // Slightly more sensitive
           vGaps.forEach(gapCenter => {
             const pos = (gapCenter / w) * 100;
-            if (pos > 2 && pos < 98 && !vLines.some(l => Math.abs(l.position - pos) < 3)) {
+            if (pos > 1 && pos < 99 && !vLines.some(l => Math.abs(l.position - pos) < 3)) {
               vLines.push({ id: `layout-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
             }
           });
 
-          // Horizontal Wireless (Rows)
+          // Horizontal Wireless (Rows) - IMPROVED SENSITIVITY
           const yOccupancy = new Array(h).fill(false);
           wordBoxes.forEach((box: any) => {
             for (let i = box.y0; i < box.y1; i++) if (i >= 0 && i < h) yOccupancy[i] = true;
           });
-          const hGaps = findGapsInOccupancy(yOccupancy, h * 0.01); 
+          // Lowered gap threshold from 0.01 to 0.003 to pick up tight rows
+          const hGaps = findGapsInOccupancy(yOccupancy, Math.max(1, h * 0.003)); 
           hGaps.forEach(gapCenter => {
             const pos = (gapCenter / h) * 100;
-            if (pos > 1 && pos < 99 && !hLines.some(l => Math.abs(l.position - pos) < 2)) {
+            // Also reduced proximity filter from 2 to 1 to allow more frequent row lines
+            if (pos > 0.5 && pos < 99.5 && !hLines.some(l => Math.abs(l.position - pos) < 1)) {
               hLines.push({ id: `layout-h-${Math.random().toString(36).substr(2, 9)}`, type: 'horizontal', position: pos });
             }
           });
@@ -304,8 +302,8 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
     }
 
     if (opts.deskew) {
-      try {
-        if (cv.findNonZero && cv.minAreaRect) {
+      if (cv.findNonZero && cv.minAreaRect) {
+        try {
           const threshForSkew = new cv.Mat();
           cv.threshold(current, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
           const points = new cv.Mat();
@@ -324,8 +322,8 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
             }
           }
           threshForSkew.delete(); points.delete();
-        }
-      } catch (e) { console.warn("Deskew fail:", e); }
+        } catch (e) { console.warn("Deskew fail:", e); }
+      }
     }
 
     if (opts.binarize) {
@@ -347,9 +345,6 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
   }
 }
 
-/**
- * Basic Canvas-based pre-processing fallback
- */
 function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, height: number, options?: PreprocessingOptions) {
   if (width <= 0 || height <= 0) return;
   const imageData = ctx.getImageData(0, 0, width, height);
@@ -368,9 +363,6 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
   ctx.putImageData(imageData, 0, 0);
 }
 
-/**
- * Generates a preprocessed preview data URI for a region.
- */
 export async function getPreprocessedPreview(imageSrc: string, region: TableRegion, options: PreprocessingOptions): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -414,9 +406,6 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
   });
 }
 
-/**
- * Main function to process all tables on a document page.
- */
 export async function processTablesOnPage(
   imageSrc: string, 
   regions: TableRegion[], 
@@ -519,4 +508,3 @@ function fallbackToCanvas(img: HTMLImageElement, region: TableRegion, canvas: HT
   ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
   if (preprocess) preprocessCanvasForOcr(ctx, w, h, options);
 }
-
