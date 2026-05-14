@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -52,9 +51,9 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   const { toast } = useToast();
 
   const preprocessing = cropRect.preprocessing || { 
-    binarize: true, 
-    deskew: true, 
-    denoise: true,
+    binarize: false, 
+    deskew: false, 
+    denoise: false,
     thresholdMethod: 'global',
     thresholdValue: 128,
     thresholdBlockSize: 31,

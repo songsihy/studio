@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useRef } from 'react';
@@ -76,9 +75,9 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
         verticalLines: [],
         horizontalLines: [],
         preprocessing: {
-          binarize: true,
-          deskew: true,
-          denoise: true,
+          binarize: false,
+          deskew: false,
+          denoise: false,
           thresholdMethod: 'global', // Set Binary (Global) as default for manually added regions
           thresholdValue: 128,
           thresholdBlockSize: 31,

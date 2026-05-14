@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -82,7 +81,7 @@ export default function TableScanPro() {
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [pages, setPages] = useState<DocumentPage[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [selectedLangs, setSelectedLangs] = useState<string[]>(['eng']);
+  const [selectedLangs, setSelectedLangs] = useState<string[]>(['eng', 'chi_tra']);
   const [progress, setProgress] = useState(0);
   const [allExtractedData, setAllExtractedData] = useState<ExtractedTable[]>([]);
   const [isDetecting, setIsDetecting] = useState(false);

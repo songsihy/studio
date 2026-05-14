@@ -1,4 +1,3 @@
-
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -63,9 +62,9 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
               verticalLines: [],
               horizontalLines: [],
               preprocessing: {
-                binarize: true,
-                deskew: true,
-                denoise: true,
+                binarize: false,
+                deskew: false,
+                denoise: false,
                 thresholdMethod: 'global',
                 thresholdValue: 128,
                 thresholdBlockSize: 31,
@@ -325,7 +324,7 @@ function findGapsInOccupancy(occupancy: boolean[], minWidth: number): number[] {
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
     const opts = options || { 
-      binarize: true, deskew: true, denoise: true, thresholdMethod: 'adaptive', thresholdValue: 128, 
+      binarize: false, deskew: false, denoise: false, thresholdMethod: 'adaptive', thresholdValue: 128, 
       thresholdBlockSize: 31, thresholdC: 2, thresholdMaxValue: 255, adaptiveMethod: 'gaussian', thresholdType: 'binary'
     };
     let current = src.clone();
