@@ -1,4 +1,3 @@
-
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -111,8 +110,8 @@ export async function detectLinesInRegions(
 
 /**
  * Merge Close Lines implementing:
- * 1. Wired-First (Physical borders prioritized)
- * 2. Drop-Left Cluster Resolution (Keep only the rightmost anchor)
+ * 1. Wired-First (Physical borders prioritized over wireless guesses)
+ * 2. Drop-Left Cluster Resolution (Always preserve the rightmost anchor in a group)
  */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
@@ -126,19 +125,21 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
     if (line.position - lastInGroup.position < threshold) {
       currentGroup.push(line);
     } else {
-      merged.push(selectRightmostInGroup(currentGroup));
+      merged.push(selectBestInGroup(currentGroup));
       currentGroup = [line];
     }
   }
-  merged.push(selectRightmostInGroup(currentGroup));
+  merged.push(selectBestInGroup(currentGroup));
   return merged;
 }
 
-function selectRightmostInGroup(group: TableLine[]): TableLine {
-  // prioritize wired lines if present, but still apply drop-left within them
+function selectBestInGroup(group: TableLine[]): TableLine {
+  // 1. Wired-First: If any wired (physical) lines exist in this cluster, ignore wireless ones
   const wired = group.filter(l => l.id.startsWith('w-'));
-  if (wired.length > 0) return wired[wired.length - 1]; 
-  return group[group.length - 1]; // Rightmost logic for wireless
+  const candidates = wired.length > 0 ? wired : group;
+  
+  // 2. Drop-Left: Always pick the rightmost candidate in the sorted cluster
+  return candidates[candidates.length - 1];
 }
 
 export async function detectLinesInSingleRegion(
@@ -181,7 +182,7 @@ export async function detectLinesInSingleRegion(
         let wirelessV: TableLine[] = [];
         let wirelessH: TableLine[] = [];
 
-        // Wired Morphology (Physical borders)
+        // 1. Wired Analysis (Physical Borders)
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 30))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
@@ -202,7 +203,7 @@ export async function detectLinesInSingleRegion(
           if (count > w * 0.35) wiredH.push({ id: `w-h-${i}`, type: 'horizontal', position: (i / hMat.rows) * 100 });
         }
 
-        // Wireless layout analysis (Step 3 text block detection via Tesseract)
+        // 2. Wireless Analysis (Layout-based Gaps)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
@@ -212,18 +213,19 @@ export async function detectLinesInSingleRegion(
         const xOccupancy = new Array(w).fill(false);
         data.words.forEach((word: any) => {
           const charH = word.bbox.y1 - word.bbox.y0;
-          // Apply horizontal dilation to bridge gaps between characters/symbols in a word
+          // Apply horizontal word dilation to prevent grid lines cutting through words
           const dilation = charH * 1.5; 
           const startX = Math.floor(word.bbox.x0 - dilation);
           const endX = Math.ceil(word.bbox.x1 + dilation);
           for (let i = startX; i < endX; i++) if (i >= 0 && i < w) xOccupancy[i] = true;
         });
         
-        const vGapThreshold = Math.max(2, Math.floor(w * 0.02)); 
+        const vGapThreshold = Math.max(3, Math.floor(w * 0.015)); 
         findGapsInOccupancy(xOccupancy, vGapThreshold).forEach(gap => {
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
 
+        // 3. Horizontal Wireless (Row clustering)
         const sortedWords = [...data.words].map(w => w.bbox).sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
         const rowClusters: any[][] = [];
         if (sortedWords.length > 0) {
@@ -244,9 +246,9 @@ export async function detectLinesInSingleRegion(
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // Apply Drop-Left and Wired-First merging logic
-        let finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
-        let finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
+        // Apply Final Consolidation Logic: Wired-First + Drop-Left
+        const finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
+        const finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
 
         src.delete(); roi.delete(); gray.delete(); thresh.delete(); 
         vKernel.delete(); vMat.delete(); hKernel.delete(); hMat.delete();
@@ -373,14 +375,13 @@ export async function processTablesOnPage(
   let processedRegionsCount = 0;
 
   for (const region of regions) {
-    const scale = 2.5; // Optimized Lanczos upscale for dense text
+    const scale = 2.5; // High-res upscale for English/Chinese characters
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const rowsCount = hCoords.length - 1;
     const colsCount = vCoords.length - 1;
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
 
-    // Strategy Choice logic
     if (region.extractionStrategy === 'single-pass' || engineConfig.type === 'ai') {
       const regionCanvas = document.createElement('canvas');
       if (useCv && srcMat) {
@@ -419,7 +420,6 @@ export async function processTablesOnPage(
           }
         }
       } else {
-        // Tesseract/Scribe Single Pass Layout Mapping
         const worker = await createWorker(language);
         const { data } = await worker.recognize(regionCanvas);
         data.words.forEach((word: any) => {
@@ -432,12 +432,11 @@ export async function processTablesOnPage(
         await worker.terminate();
       }
     } else {
-      // Cell-by-Cell Strategy with 10% Padding
       const worker = await createWorker(language);
       for (let r = 0; r < rowsCount; r++) {
         for (let c = 0; c < colsCount; c++) {
           const cellCanvas = document.createElement('canvas');
-          const padding = 0.1; 
+          const padding = 0.1; // 10% padding to avoid clipping text touching grid lines
           const xStart = Math.max(0, vCoords[c] - (vCoords[c+1] - vCoords[c]) * padding);
           const xEnd = Math.min(100, vCoords[c+1] + (vCoords[c+1] - vCoords[c]) * padding);
           const yStart = Math.max(0, hCoords[r] - (hCoords[r+1] - hCoords[r]) * padding);
