@@ -145,25 +145,32 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
 
-        // --- 0. Quick Deskew for detection accuracy ---
+        // --- 0. Quick Deskew for detection accuracy (Safe Check) ---
         const threshForSkew = new cv.Mat();
         cv.threshold(gray, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-        const points = new cv.Mat();
-        cv.findNonZero(threshForSkew, points);
+        
         let detectionGray = gray.clone();
-        if (!points.empty()) {
-          const box = cv.minAreaRect(points);
-          let angle = box.angle;
-          if (angle < -45) angle = angle + 90;
-          if (Math.abs(angle) > 0.5) {
-            const center = new cv.Point(gray.cols / 2, gray.rows / 2);
-            const M = cv.getRotationMatrix2D(center, angle, 1.0);
-            cv.warpAffine(gray, detectionGray, M, new cv.Size(gray.cols, gray.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
-            M.delete();
+        if (cv.findNonZero) {
+          try {
+            const points = new cv.Mat();
+            cv.findNonZero(threshForSkew, points);
+            if (!points.empty()) {
+              const box = cv.minAreaRect(points);
+              let angle = box.angle;
+              if (angle < -45) angle = angle + 90;
+              if (Math.abs(angle) > 0.5) {
+                const center = new cv.Point(gray.cols / 2, gray.rows / 2);
+                const M = cv.getRotationMatrix2D(center, angle, 1.0);
+                cv.warpAffine(gray, detectionGray, M, new cv.Size(gray.cols, gray.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+                M.delete();
+              }
+            }
+            points.delete();
+          } catch (e) {
+            console.warn("Deskew failed:", e);
           }
         }
         threshForSkew.delete();
-        points.delete();
         
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(detectionGray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
@@ -244,7 +251,6 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         }
 
         // 2b. Vertical Projection (Finding Columns)
-        // Aggressive horizontal smearing to close gaps between characters in a word
         const vSmeared = new cv.Mat();
         const smearWidth = Math.max(8, Math.floor(avgRowHeight * 1.5)); 
         const vSmearKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(smearWidth, 2));
@@ -258,14 +264,12 @@ export async function detectLinesInSingleRegion(imageSrc: string, region: TableR
         }
 
         const smoothedV = smoothArray(vProjection, 3);
-        // Ultra-sensitive threshold for wireless columns
         const vGapThreshold = vSmeared.rows * 0.005; 
         const vMinWidth = Math.max(2, vSmeared.cols * 0.005); 
         
         const vGaps = findGaps(smoothedV, vMinWidth, vGapThreshold);
         vGaps.forEach(gapCenter => {
           const pos = (gapCenter / vSmeared.cols) * 100;
-          // Ignore edges and avoid duplicate lines
           if (pos > 3 && pos < 97 && !vLines.some(l => Math.abs(l.position - pos) < 4)) {
             vLines.push({ id: `wireless-v-${Math.random().toString(36).substr(2, 9)}`, type: 'vertical', position: pos });
           }
@@ -374,29 +378,33 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       current = blurred;
     }
 
-    if (opts.deskew) {
-      const threshForSkew = new cv.Mat();
-      cv.threshold(current, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-      const points = new cv.Mat();
-      cv.findNonZero(threshForSkew, points);
-      
-      if (!points.empty()) {
-        const box = cv.minAreaRect(points);
-        let angle = box.angle;
-        if (angle < -45) angle = angle + 90;
+    if (opts.deskew && cv.findNonZero) {
+      try {
+        const threshForSkew = new cv.Mat();
+        cv.threshold(current, threshForSkew, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+        const points = new cv.Mat();
+        cv.findNonZero(threshForSkew, points);
         
-        if (Math.abs(angle) > 0.3) {
-          const center = new cv.Point(current.cols / 2, current.rows / 2);
-          const M = cv.getRotationMatrix2D(center, angle, 1.0);
-          const deskewed = new cv.Mat();
-          cv.warpAffine(current, deskewed, M, new cv.Size(current.cols, current.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
-          current.delete();
-          current = deskewed;
-          M.delete();
+        if (!points.empty()) {
+          const box = cv.minAreaRect(points);
+          let angle = box.angle;
+          if (angle < -45) angle = angle + 90;
+          
+          if (Math.abs(angle) > 0.3) {
+            const center = new cv.Point(current.cols / 2, current.rows / 2);
+            const M = cv.getRotationMatrix2D(center, angle, 1.0);
+            const deskewed = new cv.Mat();
+            cv.warpAffine(current, deskewed, M, new cv.Size(current.cols, current.rows), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+            current.delete();
+            current = deskewed;
+            M.delete();
+          }
         }
+        threshForSkew.delete();
+        points.delete();
+      } catch (e) {
+        console.warn("Deskew skip:", e);
       }
-      threshForSkew.delete();
-      points.delete();
     }
 
     if (opts.binarize) {
