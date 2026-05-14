@@ -194,6 +194,7 @@ export async function detectLinesInSingleRegion(
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
 
+        // Preprocess ROI for high contrast "Wired" detection
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
@@ -230,6 +231,7 @@ export async function detectLinesInSingleRegion(
         // 2. Wireless Pass (Layout analysis via OCR word positions)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
+        // Ensure high quality grayscale for OCR layout pass
         cv.imshow(tempCanvas, gray);
         const worker = existingWorker || await createWorker(language);
         const { data } = await worker.recognize(tempCanvas);
@@ -307,15 +309,17 @@ function findGapsInOccupancy(occupancy: boolean[], minWidth: number): number[] {
 
 /**
  * Advanced image pre-processing for Tesseract OCR.
+ * Focuses on creating high-contrast black text on pure white background.
  */
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
   try {
     const opts = options || { 
-      binarize: true, deskew: true, denoise: true, thresholdMethod: 'global', thresholdValue: 128, 
+      binarize: true, deskew: true, denoise: true, thresholdMethod: 'adaptive', thresholdValue: 128, 
       thresholdBlockSize: 31, thresholdC: 2, thresholdMaxValue: 255, adaptiveMethod: 'gaussian', thresholdType: 'binary'
     };
     let current = src.clone();
     
+    // Convert to Grayscale
     if (current.channels() > 1) {
       let gray = new cv.Mat();
       cv.cvtColor(current, gray, cv.COLOR_RGBA2GRAY, 0);
@@ -323,6 +327,7 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       current = gray;
     }
 
+    // Median blur to remove salt and pepper noise
     if (opts.denoise) {
       const blurred = new cv.Mat();
       cv.medianBlur(current, blurred, 3);
@@ -330,21 +335,39 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
       current = blurred;
     }
 
+    // Enhanced Contrast / Adaptive Binarization
     if (opts.binarize) {
       const binary = new cv.Mat();
       const thresholdType = opts.thresholdType === 'binary_inv' ? cv.THRESH_BINARY_INV : cv.THRESH_BINARY;
       const maxValue = opts.thresholdMaxValue || 255;
+      
       if (opts.thresholdMethod === 'global') {
         cv.threshold(current, binary, opts.thresholdValue, maxValue, thresholdType);
       } else {
+        // Force odd block size for adaptive threshold
         const blockSize = Math.max(3, opts.thresholdBlockSize % 2 === 0 ? opts.thresholdBlockSize + 1 : opts.thresholdBlockSize);
-        cv.adaptiveThreshold(current, binary, maxValue, opts.adaptiveMethod === 'mean' ? cv.ADAPTIVE_THRESH_MEAN_C : cv.ADAPTIVE_THRESH_GAUSSIAN_C, thresholdType, blockSize, opts.thresholdC);
+        cv.adaptiveThreshold(
+          current, 
+          binary, 
+          maxValue, 
+          opts.adaptiveMethod === 'mean' ? cv.ADAPTIVE_THRESH_MEAN_C : cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
+          thresholdType, 
+          blockSize, 
+          opts.thresholdC
+        );
       }
-      current.delete(); current = binary;
+      current.delete(); 
+      current = binary;
+
+      // Clean up the text strokes
+      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 1));
+      cv.morphologyEx(current, current, cv.MORPH_OPEN, kernel);
+      kernel.delete();
     }
 
     return current;
   } catch (e) {
+    console.error("Preprocessing Error:", e);
     return src.clone();
   }
 }
@@ -353,7 +376,7 @@ function preprocessCanvasForOcr(ctx: CanvasRenderingContext2D, width: number, he
   if (width <= 0 || height <= 0) return;
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
-  const method = options?.thresholdMethod || 'global';
+  const method = options?.thresholdMethod || 'adaptive';
   const threshVal = options?.thresholdValue || 128;
   const inv = options?.thresholdType === 'binary_inv';
 
@@ -411,6 +434,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
 
 /**
  * Process extraction for a whole page of tables using Step 3's layout hints.
+ * Optimized for Step 4 using a Single-Pass OCR strategy for Tesseract.
  */
 export async function processTablesOnPage(
   imageSrc: string, 
@@ -424,8 +448,10 @@ export async function processTablesOnPage(
   if (isTesseract) worker = await createWorker(language);
 
   const img = new Image();
+  img.crossOrigin = 'Anonymous';
   img.src = imageSrc;
   await new Promise(resolve => img.onload = resolve);
+  
   const cv = window.cv;
   const useCv = !!(cv && cv.imread);
   let srcMat: any = null;
@@ -444,12 +470,14 @@ export async function processTablesOnPage(
         let tableW = Math.min(srcMat.cols - tableX, Math.floor((region.width / 100) * srcMat.cols));
         let tableH = Math.min(srcMat.rows - tableY, Math.floor((region.height / 100) * srcMat.rows));
         const regionMat = srcMat.roi(new cv.Rect(tableX, tableY, tableW, tableH));
+        // Use optimal preprocessing for Tesseract
         const processedRegionMat = preprocessMatForOcr(cv, regionMat, region.preprocessing);
         cv.imshow(tempCanvas, processedRegionMat);
         regionMat.delete(); processedRegionMat.delete();
       } catch (e) { fallbackToCanvas(img, region, tempCanvas, true, region.preprocessing); }
     } else fallbackToCanvas(img, region, tempCanvas, true, region.preprocessing);
 
+    // Finalized Grid Lines from Step 3
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const rowsCount = hCoords.length - 1;
@@ -458,18 +486,25 @@ export async function processTablesOnPage(
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
 
     if (isTesseract) {
-      // Single-Pass Strategy for Tesseract: Assign detected words to grid cells
+      // SINGLE-PASS OCR: Perform one pass on the whole region
+      // and bin detected word bounding boxes into cells.
       const { data } = await worker.recognize(tempCanvas);
+      
       data.words.forEach((word: any) => {
+        // Use center of the word bbox to decide cell placement
         const centerX = (word.bbox.x0 + word.bbox.x1) / 2;
         const centerY = (word.bbox.y0 + word.bbox.y1) / 2;
+        
+        // Convert to percentage relative to tempCanvas
         const xPct = (centerX / tempCanvas.width) * 100;
         const yPct = (centerY / tempCanvas.height) * 100;
 
+        // Find matching cell
         let colIdx = vCoords.findIndex((v, i) => i < vCoords.length - 1 && xPct >= v && xPct < vCoords[i + 1]);
         let rowIdx = hCoords.findIndex((h, i) => i < hCoords.length - 1 && yPct >= h && yPct < hCoords[i + 1]);
 
         if (colIdx !== -1 && rowIdx !== -1) {
+          // Append text to cell data
           tableData[rowIdx][colIdx] = (tableData[rowIdx][colIdx] + " " + word.text).trim();
         }
       });
@@ -489,8 +524,17 @@ export async function processTablesOnPage(
               cellCanvas.width = w; cellCanvas.height = h;
               cellCtx.drawImage(tempCanvas, x, y, w, h, 0, 0, w, h);
               try {
-                tableData[r][c] = await callAiEngineAction(cellCanvas.toDataURL('image/jpeg'), engineConfig.aiConfig.apiUrl, engineConfig.aiConfig.apiKey, engineConfig.aiConfig.model, engineConfig.aiConfig.systemPrompt);
-              } catch (err) { tableData[r][c] = "[AI ERROR]"; }
+                // Pass high-quality JPEG for AI Vision
+                tableData[r][c] = await callAiEngineAction(
+                  cellCanvas.toDataURL('image/jpeg'), 
+                  engineConfig.aiConfig.apiUrl, 
+                  engineConfig.aiConfig.apiKey, 
+                  engineConfig.aiConfig.model, 
+                  engineConfig.aiConfig.systemPrompt
+                );
+              } catch (err) { 
+                tableData[r][c] = "[AI ERROR]"; 
+              }
             }
           }
         }
