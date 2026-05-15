@@ -1,10 +1,9 @@
-
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine, TableRegion, PreprocessingOptions, OcrEngineType, ExtractionStrategy } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, BoxSelect, Cpu, Bot, PenTool, Layers, Copy } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, BoxSelect, Cpu, Bot, PenTool, Layers, Copy, Grid3X3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -80,36 +79,45 @@ export const LineEditor: React.FC<LineEditorProps> = ({
     }
   };
 
-  const copyToClipboard = async () => {
+  /**
+   * Copies the current view to clipboard.
+   * withGrid parameter draws the red table lines on the exported image.
+   */
+  const copyToClipboard = async (withGrid: boolean = false) => {
     if (!imageSrc) return;
     setIsPreviewLoading(true);
     try {
-      let uriToCopy = processedImageUri;
+      // Create a region object that includes the latest manually adjusted lines
+      const regionWithCurrentLines: TableRegion = {
+        ...cropRect,
+        verticalLines: vLines,
+        horizontalLines: hLines
+      };
 
-      // If not in preview mode or preview not loaded, generate a raw crop on the fly
-      if (!showProcessedPreview || !uriToCopy) {
-        const rawOptions: PreprocessingOptions = {
-          binarize: false,
-          deskew: false,
-          denoise: false,
-          thresholdMethod: 'global',
-          thresholdValue: 128,
-          thresholdBlockSize: 31,
-          thresholdC: 2,
-          thresholdMaxValue: 255,
-          adaptiveMethod: 'gaussian',
-          thresholdType: 'binary',
-          showTextBoxes: false
-        };
-        uriToCopy = await getPreprocessedPreview(imageSrc, cropRect, rawOptions, language);
-      }
+      // Determine options: If Preview is OFF, use a raw set of options to bypass processing.
+      // If Preview is ON, use the current cleanup settings.
+      const currentOpts = showProcessedPreview ? preprocessing : {
+        binarize: false,
+        deskew: false,
+        denoise: false,
+        thresholdMethod: 'global',
+        thresholdValue: 128,
+        thresholdBlockSize: 31,
+        thresholdC: 2,
+        thresholdMaxValue: 255,
+        adaptiveMethod: 'gaussian',
+        thresholdType: 'binary',
+        showTextBoxes: false
+      } as PreprocessingOptions;
 
-      const response = await fetch(uriToCopy);
+      const uri = await getPreprocessedPreview(imageSrc, regionWithCurrentLines, currentOpts, language, withGrid);
+      
+      const response = await fetch(uri);
       const blob = await response.blob();
       const item = new ClipboardItem({ [blob.type]: blob });
       await navigator.clipboard.write([item]);
       toast({
-        title: "Copied",
+        title: withGrid ? "Copied with Grid" : "Copied",
         description: "Image copied to clipboard.",
       });
     } catch (err) {
@@ -117,7 +125,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
       toast({
         variant: "destructive",
         title: "Copy Failed",
-        description: "Could not copy image to clipboard.",
+        description: "Could not copy image to clipboard. Ensure site permissions are granted.",
       });
     } finally {
       setIsPreviewLoading(false);
@@ -277,9 +285,14 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             <Button size="sm" variant={showProcessedPreview ? "secondary" : "outline"} className="h-7 text-[10px] gap-1.5" onClick={() => setShowProcessedPreview(!showProcessedPreview)}>
               {showProcessedPreview ? <EyeOff size={12} /> : <Eye size={12} />} Preview
             </Button>
-            <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1.5" onClick={copyToClipboard} disabled={isPreviewLoading}>
-              <Copy size={12} /> Copy
-            </Button>
+            <div className="flex gap-1 bg-card p-1 rounded-md border shadow-sm">
+              <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1 px-2" onClick={() => copyToClipboard(false)} disabled={isPreviewLoading}>
+                <Copy size={12} /> Image
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1 px-2" onClick={() => copyToClipboard(true)} disabled={isPreviewLoading}>
+                <Grid3X3 size={12} /> + Grid
+              </Button>
+            </div>
           </div>
         </div>
 

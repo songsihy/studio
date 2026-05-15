@@ -328,7 +328,17 @@ function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions):
   return current;
 }
 
-export async function getPreprocessedPreview(imageSrc: string, region: TableRegion, options: PreprocessingOptions, language: string = 'eng+chi_tra'): Promise<string> {
+/**
+ * Generates a preview image for a table region.
+ * Handles binarization, denoising, deskewing, masking, and grid line visualization.
+ */
+export async function getPreprocessedPreview(
+  imageSrc: string, 
+  region: TableRegion, 
+  options: PreprocessingOptions, 
+  language: string = 'eng+chi_tra',
+  drawGrid: boolean = false
+): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
@@ -347,21 +357,48 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
           const src = cv.imread(img);
           const roi = src.roi(new cv.Rect((region.x / 100) * src.cols, (region.y / 100) * src.rows, (region.width / 100) * src.cols, (region.height / 100) * src.rows));
           
-          // Determine if we are requesting a "raw" preview (e.g. for Copy button when preview is off)
+          // Determine if we are requesting a "raw" preview (e.g. bypass processing if all cleanup is OFF)
           const isRaw = !options.binarize && !options.denoise && !options.deskew && !options.showTextBoxes;
 
           if (isRaw) {
             cv.imshow(canvas, roi);
+            // Draw grid in red if requested on the raw image
+            if (drawGrid) {
+              ctx.strokeStyle = '#ff0000';
+              ctx.lineWidth = 2;
+              region.verticalLines.forEach(line => {
+                const px = (line.position / 100) * canvas.width;
+                ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, canvas.height); ctx.stroke();
+              });
+              region.horizontalLines.forEach(line => {
+                const py = (line.position / 100) * canvas.height;
+                ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(canvas.width, py); ctx.stroke();
+              });
+            }
             const dataUrl = canvas.toDataURL();
             src.delete(); roi.delete();
             resolve(dataUrl); return;
           }
 
-          // Apply masking and processing for visual preview when cleanup is active
+          // Apply masking and processing for visual preview
           applyWiredLineMask(cv, roi, region);
           const processed = preprocessMatForOcr(cv, roi, options);
           cv.imshow(canvas, processed);
           
+          // Draw grid in red if requested on the processed image
+          if (drawGrid) {
+            ctx.strokeStyle = '#ff0000';
+            ctx.lineWidth = 2;
+            region.verticalLines.forEach(line => {
+              const px = (line.position / 100) * canvas.width;
+              ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, canvas.height); ctx.stroke();
+            });
+            region.horizontalLines.forEach(line => {
+              const py = (line.position / 100) * canvas.height;
+              ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(canvas.width, py); ctx.stroke();
+            });
+          }
+
           if (options.showTextBoxes) {
             const worker = await createWorker(language);
             const { data } = await worker.recognize(canvas);
@@ -380,7 +417,20 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
           console.error("Preview render error:", e);
         }
       }
+      // Fallback if OpenCV is not available
       ctx.drawImage(img, (region.x / 100) * img.width, (region.y / 100) * img.height, w, h, 0, 0, w, h);
+      if (drawGrid) {
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 2;
+        region.verticalLines.forEach(line => {
+          const px = (line.position / 100) * canvas.width;
+          ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, canvas.height); ctx.stroke();
+        });
+        region.horizontalLines.forEach(line => {
+          const py = (line.position / 100) * canvas.height;
+          ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(canvas.width, py); ctx.stroke();
+        });
+      }
       resolve(canvas.toDataURL());
     };
     img.src = imageSrc;
