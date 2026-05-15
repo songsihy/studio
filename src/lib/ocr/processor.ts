@@ -1,4 +1,3 @@
-
 'use client';
 
 import { createWorker } from 'tesseract.js';
@@ -14,27 +13,32 @@ declare global {
 /**
  * Offsets (removes) wired lines from the image using the detected lines as a mask.
  * This helps OCR by removing non-text structural elements.
+ * 
+ * CRITICAL: Only uses lines with 'w-' prefix (physical borders) to avoid masking
+ * text that might sit on a virtual 'wireless' boundary.
  */
 function applyWiredLineMask(cv: any, src: any, region: TableRegion): void {
-  if (!region.verticalLines.length && !region.horizontalLines.length) return;
+  const wiredV = region.verticalLines.filter(l => l.id.startsWith('w-'));
+  const wiredH = region.horizontalLines.filter(l => l.id.startsWith('w-'));
+
+  if (!wiredV.length && !wiredH.length) return;
   
   const mask = cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC1);
   const white = new cv.Scalar(255);
   // Using a thickness that ensures the line is fully covered
   const thickness = 4; 
 
-  region.verticalLines.forEach(line => {
+  wiredV.forEach(line => {
     const x = Math.floor((line.position / 100) * src.cols);
     cv.line(mask, {x: x, y: 0}, {x: x, y: src.rows}, white, thickness);
   });
 
-  region.horizontalLines.forEach(line => {
+  wiredH.forEach(line => {
     const y = Math.floor((line.position / 100) * src.rows);
     cv.line(mask, {x: 0, y: y}, {x: src.cols, y: y}, white, thickness);
   });
 
   // Set masked areas to background color (white)
-  // Determine correct scalar based on input channels
   let bgColor;
   if (src.channels() === 4) bgColor = new cv.Scalar(255, 255, 255, 255);
   else if (src.channels() === 3) bgColor = new cv.Scalar(255, 255, 255);
@@ -145,7 +149,6 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 function selectBestInGroup(group: TableLine[]): TableLine {
   const wired = group.filter(l => l.id.startsWith('w-'));
   const candidates = wired.length > 0 ? wired : group;
-  // Wired-First + Drop-Left: preserve the rightmost boundary in a cluster
   return candidates[candidates.length - 1];
 }
 
@@ -344,7 +347,6 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
           const src = cv.imread(img);
           const roi = src.roi(new cv.Rect((region.x / 100) * src.cols, (region.y / 100) * src.rows, (region.width / 100) * src.cols, (region.height / 100) * src.rows));
           
-          // Step: Offset wired lines using detected lines as mask
           applyWiredLineMask(cv, roi, region);
 
           const processed = preprocessMatForOcr(cv, roi, options);
@@ -353,7 +355,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
           if (options.showTextBoxes) {
             const worker = await createWorker(language);
             const { data } = await worker.recognize(canvas);
-            ctx.strokeStyle = '#22E1CC'; // Turquoise secondary
+            ctx.strokeStyle = '#22E1CC';
             ctx.lineWidth = 2;
             data.words.forEach((word: any) => {
               ctx.strokeRect(word.bbox.x0, word.bbox.y0, word.bbox.x1 - word.bbox.x0, word.bbox.y1 - word.bbox.y0);
@@ -412,7 +414,6 @@ export async function processTablesOnPage(
         const tableH = Math.floor((region.height / 100) * srcMat.rows);
         const roi = srcMat.roi(new cv.Rect(tableX, tableY, tableW, tableH));
         
-        // Step: Offset wired lines using detected lines as mask
         applyWiredLineMask(cv, roi, region);
 
         const processed = preprocessMatForOcr(cv, roi, region.preprocessing);
@@ -453,7 +454,6 @@ export async function processTablesOnPage(
           if (colIdx !== -1 && rowIdx !== -1) tableData[rowIdx][colIdx] = (tableData[rowIdx][colIdx] + " " + word.text).trim();
         });
 
-        // Targeted fallback for empty cells in Single Pass strategy
         for (let r = 0; r < rowsCount; r++) {
           for (let c = 0; c < colsCount; c++) {
             if (!tableData[r][c].trim()) {
@@ -474,7 +474,6 @@ export async function processTablesOnPage(
         }
       }
     } else {
-      // Cell-by-cell logic: Applying mask to whole table ROI first for consistency
       let tableRoi: any = null;
       if (useCv && srcMat) {
         const tx = Math.max(0, Math.floor((region.x / 100) * srcMat.cols));
@@ -525,7 +524,6 @@ export async function processTablesOnPage(
     }
     await worker.terminate();
     
-    // Automatic cleanup of entirely empty rows and columns
     const finalData = cleanupTable(tableData);
     allResults.push({ id: region.id, tableName: region.name, headers: finalData[0] || [], rows: finalData });
     processedRegionsCount++;
@@ -537,20 +535,13 @@ export async function processTablesOnPage(
 
 export function cleanupTable(data: string[][]): string[][] {
   if (data.length === 0) return data;
-  
-  // Identify empty rows
   const filteredRows = data.filter(row => row.some(cell => cell.trim().length > 0));
   if (filteredRows.length === 0) return [];
-
-  // Identify empty columns
   const colCount = filteredRows[0].length;
   const emptyCols = new Set<number>();
   for (let c = 0; c < colCount; c++) {
-    const isColEmpty = filteredRows.every(row => row[c].trim().length === 0);
-    if (isColEmpty) emptyCols.add(c);
+    if (filteredRows.every(row => row[c].trim().length === 0)) emptyCols.add(c);
   }
-
-  // Remove empty columns
   return filteredRows.map(row => row.filter((_, c) => !emptyCols.has(c)));
 }
 
