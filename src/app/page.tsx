@@ -76,7 +76,7 @@ const SUPPORTED_LANGS = [
 
 /**
  * Interactive Result Table component with History (Undo/Redo/Reset), 
- * Row Merging, and Cell Editing.
+ * Row Merging, Row Removal, and Cell Editing.
  */
 function InteractiveTable({ table, onExport }: { table: ExtractedTable, onExport: (table: ExtractedTable, format: any) => void }) {
   const [data, setData] = useState<string[][]>(table.rows);
@@ -166,6 +166,12 @@ function InteractiveTable({ table, onExport }: { table: ExtractedTable, onExport
     pushToHistory(finalData);
   };
 
+  const removeSelectedRows = () => {
+    if (selectedRows.size === 0) return;
+    const newData = data.filter((_, idx) => !selectedRows.has(idx));
+    pushToHistory(newData);
+  };
+
   const removeColumn = (colIdx: number) => {
     const newData = data.map(row => row.filter((_, ci) => ci !== colIdx));
     pushToHistory(newData);
@@ -218,11 +224,18 @@ function InteractiveTable({ table, onExport }: { table: ExtractedTable, onExport
               <RotateCcw size={14} />
             </Button>
           </div>
-          {selectedRows.size > 1 && (
-            <Button size="sm" variant="secondary" className="h-7 text-[10px] font-bold bg-primary/10 text-primary border-primary/20 hover:bg-primary/20" onClick={mergeSelected}>
-              MERGE {selectedRows.size} ROWS
-            </Button>
-          )}
+          <div className="flex gap-2">
+            {selectedRows.size > 1 && (
+              <Button size="sm" variant="secondary" className="h-7 text-[10px] font-bold bg-primary/10 text-primary border-primary/20 hover:bg-primary/20" onClick={mergeSelected}>
+                MERGE {selectedRows.size} ROWS
+              </Button>
+            )}
+            {selectedRows.size > 0 && (
+              <Button size="sm" variant="outline" className="h-7 text-[10px] font-bold text-destructive border-destructive/20 hover:bg-destructive/10" onClick={removeSelectedRows}>
+                DELETE {selectedRows.size} ROWS
+              </Button>
+            )}
+          </div>
         </div>
         <div className="flex gap-2">
           {['csv', 'md', 'html'].map(fmt => (
@@ -741,3 +754,4 @@ export default function TableScanPro() {
     </div>
   );
 }
+
