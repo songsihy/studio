@@ -18,7 +18,14 @@ import {
   PenTool,
   Layers,
   Sparkles,
-  Key
+  Key,
+  Undo2,
+  Redo2,
+  Trash2,
+  ArrowUp,
+  ArrowDown,
+  Check,
+  X
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -66,6 +73,231 @@ const SUPPORTED_LANGS = [
   { id: 'ita', label: 'Italian' },
   { id: 'por', label: 'Portuguese' },
 ];
+
+/**
+ * Interactive Result Table component with History (Undo/Redo/Reset), 
+ * Row Merging, and Cell Editing.
+ */
+function InteractiveTable({ table, onExport }: { table: ExtractedTable, onExport: (table: ExtractedTable, format: any) => void }) {
+  const [data, setData] = useState<string[][]>(table.rows);
+  const [history, setHistory] = useState<string[][][]>([table.rows]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [editingCell, setEditingCell] = useState<{ r: number, c: number } | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  const pushToHistory = (newData: string[][]) => {
+    const cleanData = cleanupTable(newData);
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(cleanData);
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+    setData(cleanData);
+    setSelectedRows(new Set());
+  };
+
+  const cleanupTable = (rows: string[][]) => {
+    if (rows.length === 0) return rows;
+    const filteredRows = rows.filter(row => row.some(cell => cell.trim().length > 0));
+    if (filteredRows.length === 0) return [];
+    const colCount = filteredRows[0].length;
+    const emptyCols = new Set<number>();
+    for (let c = 0; c < colCount; c++) {
+      if (filteredRows.every(row => row[c].trim().length === 0)) emptyCols.add(c);
+    }
+    return filteredRows.map(row => row.filter((_, c) => !emptyCols.has(c)));
+  };
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      const idx = historyIndex - 1;
+      setHistoryIndex(idx);
+      setData(history[idx]);
+      setSelectedRows(new Set());
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      const idx = historyIndex + 1;
+      setHistoryIndex(idx);
+      setData(history[idx]);
+      setSelectedRows(new Set());
+    }
+  };
+
+  const reset = () => {
+    setData(table.rows);
+    setHistory([table.rows]);
+    setHistoryIndex(0);
+    setSelectedRows(new Set());
+  };
+
+  const handleEditStart = (r: number, c: number, val: string) => {
+    setEditingCell({ r, c });
+    setEditValue(val);
+  };
+
+  const handleEditCommit = () => {
+    if (!editingCell) return;
+    const newData = data.map((row, ri) => 
+      ri === editingCell.r ? row.map((cell, ci) => ci === editingCell.c ? editValue : cell) : row
+    );
+    pushToHistory(newData);
+    setEditingCell(null);
+  };
+
+  const mergeSelected = () => {
+    if (selectedRows.size < 2) return;
+    const sortedIndices = Array.from(selectedRows).sort((a, b) => a - b);
+    const firstIdx = sortedIndices[0];
+    const newData = [...data];
+    const mergedRow = [...newData[firstIdx]];
+    
+    for (let i = 1; i < sortedIndices.length; i++) {
+      const currentIdx = sortedIndices[i];
+      newData[currentIdx].forEach((val, ci) => {
+        if (val.trim()) mergedRow[ci] = (mergedRow[ci] + " " + val).trim();
+      });
+    }
+    
+    newData[firstIdx] = mergedRow;
+    const finalData = newData.filter((_, idx) => idx === firstIdx || !selectedRows.has(idx));
+    pushToHistory(finalData);
+  };
+
+  const removeColumn = (colIdx: number) => {
+    const newData = data.map(row => row.filter((_, ci) => ci !== colIdx));
+    pushToHistory(newData);
+  };
+
+  const mergeColumnUp = (colIdx: number) => {
+    const newData = [...data];
+    for (let i = 1; i < newData.length; i++) {
+      if (!newData[i-1][colIdx].trim() && newData[i][colIdx].trim()) {
+        newData[i-1][colIdx] = newData[i][colIdx];
+        newData[i][colIdx] = "";
+      }
+    }
+    pushToHistory(newData);
+  };
+
+  const mergeColumnDown = (colIdx: number) => {
+    const newData = [...data];
+    for (let i = newData.length - 2; i >= 0; i--) {
+      if (!newData[i+1][colIdx].trim() && newData[i][colIdx].trim()) {
+        newData[i+1][colIdx] = newData[i][colIdx];
+        newData[i][colIdx] = "";
+      }
+    }
+    pushToHistory(newData);
+  };
+
+  const toggleRow = (idx: number) => {
+    const next = new Set(selectedRows);
+    if (next.has(idx)) next.delete(idx);
+    else next.add(idx);
+    setSelectedRows(next);
+  };
+
+  if (data.length === 0) return null;
+
+  return (
+    <Card className="border-2 shadow-lg overflow-hidden">
+      <CardHeader className="bg-muted/30 flex flex-col md:flex-row md:items-center justify-between border-b p-4 gap-4">
+        <div className="flex items-center gap-3">
+          <CardTitle className="text-sm font-bold uppercase tracking-wider">{table.tableName}</CardTitle>
+          <div className="flex bg-background border rounded-lg p-1 shadow-sm">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={undo} disabled={historyIndex === 0} title="Undo">
+              <Undo2 size={14} />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={redo} disabled={historyIndex === history.length - 1} title="Redo">
+              <Redo2 size={14} />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={reset} title="Reset">
+              <RotateCcw size={14} />
+            </Button>
+          </div>
+          {selectedRows.size > 1 && (
+            <Button size="sm" variant="secondary" className="h-7 text-[10px] font-bold bg-primary/10 text-primary border-primary/20 hover:bg-primary/20" onClick={mergeSelected}>
+              MERGE {selectedRows.size} ROWS
+            </Button>
+          )}
+        </div>
+        <div className="flex gap-2">
+          {['csv', 'md', 'html'].map(fmt => (
+            <Button key={fmt} size="sm" variant="outline" className="h-7 text-[10px] uppercase font-bold" onClick={() => onExport({ ...table, rows: data, headers: data[0] }, fmt as any)}>
+              {fmt}
+            </Button>
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent className="p-0 overflow-auto max-h-[600px]">
+        <table className="w-full text-xs border-collapse">
+          <thead className="bg-muted/50 sticky top-0 z-10">
+            <tr>
+              <th className="w-10 px-2 py-3 border-b border-r bg-muted/80"></th>
+              {data[0].map((_, ci) => (
+                <th key={ci} className="px-2 py-2 border-b border-r group min-w-[120px]">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between gap-2 px-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase truncate">Col {ci + 1}</span>
+                      <Button variant="ghost" size="icon" className="h-5 w-5 text-destructive opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeColumn(ci)} title="Remove Column">
+                        <Trash2 size={10} />
+                      </Button>
+                    </div>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button variant="outline" size="icon" className="h-6 flex-1 text-[9px]" onClick={() => mergeColumnUp(ci)} title="Merge Up">
+                        <ArrowUp size={10} className="mr-0.5" /> UP
+                      </Button>
+                      <Button variant="outline" size="icon" className="h-6 flex-1 text-[9px]" onClick={() => mergeColumnDown(ci)} title="Merge Down">
+                        <ArrowDown size={10} className="mr-0.5" /> DN
+                      </Button>
+                    </div>
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row, ri) => (
+              <tr key={ri} className={cn(
+                "hover:bg-primary/5 transition-colors border-b",
+                selectedRows.has(ri) && "bg-primary/10"
+              )}>
+                <td className="w-10 px-2 py-2 border-r text-center bg-muted/10">
+                  <Checkbox checked={selectedRows.has(ri)} onCheckedChange={() => toggleRow(ri)} className="scale-75" />
+                </td>
+                {row.map((cell, ci) => (
+                  <td 
+                    key={ci} 
+                    className="px-4 py-2 border-r text-foreground/80 relative min-w-[120px]"
+                    onDoubleClick={() => handleEditStart(ri, ci, cell)}
+                  >
+                    {editingCell?.r === ri && editingCell?.c === ci ? (
+                      <div className="absolute inset-0 z-20 bg-background flex items-center p-1">
+                        <Input 
+                          autoFocus 
+                          value={editValue} 
+                          onChange={(e) => setEditValue(e.target.value)} 
+                          onBlur={handleEditCommit}
+                          onKeyDown={(e) => e.key === 'Enter' && handleEditCommit()}
+                          className="h-full text-xs"
+                        />
+                      </div>
+                    ) : (
+                      <div className="truncate max-w-[300px]" title={cell}>{cell || <span className="text-muted-foreground/30 italic text-[10px]">empty</span>}</div>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function TableScanPro() {
   const [status, setStatus] = useState<ProcessingStatus>('idle');
@@ -441,28 +673,7 @@ export default function TableScanPro() {
               {status === 'completed' && (
                 <div className="space-y-8">
                   {allExtractedData.map((table) => (
-                    <Card key={table.id} className="border-2 shadow-lg overflow-hidden">
-                      <CardHeader className="bg-muted/30 flex flex-row items-center justify-between border-b">
-                        <CardTitle className="text-sm font-bold uppercase tracking-wider">{table.tableName}</CardTitle>
-                        <div className="flex gap-2">
-                          {['csv', 'md', 'html'].map(fmt => <Button key={fmt} size="sm" variant="outline" className="h-7 text-[10px] uppercase font-bold" onClick={() => handleExport(table, fmt as any)}>{fmt}</Button>)}
-                        </div>
-                      </CardHeader>
-                      <CardContent className="p-0 overflow-auto max-h-[500px]">
-                        <table className="w-full text-xs border-collapse">
-                          <thead className="bg-muted/50 sticky top-0">
-                            <tr>{table.headers.map((h, i) => <th key={i} className="px-4 py-3 text-left border-b border-r font-bold text-muted-foreground uppercase tracking-tight">{h}</th>)}</tr>
-                          </thead>
-                          <tbody>
-                            {table.rows.slice(1).map((row, ri) => (
-                              <tr key={ri} className="hover:bg-primary/5 transition-colors border-b">
-                                {row.map((cell, ci) => <td key={ci} className="px-4 py-2 border-r text-foreground/80">{cell}</td>)}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </CardContent>
-                    </Card>
+                    <InteractiveTable key={table.id} table={table} onExport={handleExport} />
                   ))}
                 </div>
               )}

@@ -535,7 +535,7 @@ export async function processTablesOnPage(
   return allResults;
 }
 
-function cleanupTable(data: string[][]): string[][] {
+export function cleanupTable(data: string[][]): string[][] {
   if (data.length === 0) return data;
   
   // Identify empty rows
