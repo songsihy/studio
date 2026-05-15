@@ -347,8 +347,18 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
           const src = cv.imread(img);
           const roi = src.roi(new cv.Rect((region.x / 100) * src.cols, (region.y / 100) * src.rows, (region.width / 100) * src.cols, (region.height / 100) * src.rows));
           
-          applyWiredLineMask(cv, roi, region);
+          // Determine if we are requesting a "raw" preview (e.g. for Copy button when preview is off)
+          const isRaw = !options.binarize && !options.denoise && !options.deskew && !options.showTextBoxes;
 
+          if (isRaw) {
+            cv.imshow(canvas, roi);
+            const dataUrl = canvas.toDataURL();
+            src.delete(); roi.delete();
+            resolve(dataUrl); return;
+          }
+
+          // Apply masking and processing for visual preview when cleanup is active
+          applyWiredLineMask(cv, roi, region);
           const processed = preprocessMatForOcr(cv, roi, options);
           cv.imshow(canvas, processed);
           
