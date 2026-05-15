@@ -4,7 +4,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { TableLine, TableRegion, PreprocessingOptions, OcrEngineType, ExtractionStrategy } from '@/lib/ocr-types';
 import { cn } from '@/lib/utils';
-import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, BoxSelect, Cpu, Bot, PenTool, Layers } from 'lucide-react';
+import { Plus, X, Trash2, Wand2, Loader2, Sparkles, Eye, EyeOff, BoxSelect, Cpu, Bot, PenTool, Layers, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -77,6 +77,26 @@ export const LineEditor: React.FC<LineEditorProps> = ({
       console.error("Preview update error:", e);
     } finally {
       setIsPreviewLoading(false);
+    }
+  };
+
+  const copyToClipboard = async () => {
+    if (!processedImageUri) return;
+    try {
+      const response = await fetch(processedImageUri);
+      const blob = await response.blob();
+      const item = new ClipboardItem({ [blob.type]: blob });
+      await navigator.clipboard.write([item]);
+      toast({
+        title: "Copied",
+        description: "Processed preview image copied to clipboard.",
+      });
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Copy Failed",
+        description: "Could not copy image to clipboard.",
+      });
     }
   };
 
@@ -233,6 +253,11 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             <Button size="sm" variant={showProcessedPreview ? "secondary" : "outline"} className="h-7 text-[10px] gap-1.5" onClick={() => setShowProcessedPreview(!showProcessedPreview)}>
               {showProcessedPreview ? <EyeOff size={12} /> : <Eye size={12} />} Preview
             </Button>
+            {showProcessedPreview && processedImageUri && (
+              <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1.5" onClick={copyToClipboard}>
+                <Copy size={12} /> Copy
+              </Button>
+            )}
           </div>
         </div>
 
