@@ -332,16 +332,6 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
           const roi = src.roi(new cv.Rect((region.x / 100) * src.cols, (region.y / 100) * src.rows, (region.width / 100) * src.cols, (region.height / 100) * src.rows));
           const processed = preprocessMatForOcr(cv, roi, options);
           cv.imshow(canvas, processed);
-          if (options.showTextBoxes) {
-            const worker = await createWorker(language);
-            const { data } = await worker.recognize(canvas);
-            ctx.strokeStyle = '#ef4444'; 
-            ctx.lineWidth = 1.5;
-            data.words.forEach((word: any) => {
-              ctx.strokeRect(word.bbox.x0, word.bbox.y0, word.bbox.x1 - word.bbox.x0, word.bbox.y1 - word.bbox.y0);
-            });
-            await worker.terminate();
-          }
           const dataUrl = canvas.toDataURL();
           src.delete(); roi.delete(); processed.delete();
           resolve(dataUrl); return;
@@ -376,12 +366,14 @@ export async function processTablesOnPage(
   let processedRegionsCount = 0;
 
   for (const region of regions) {
-    const scale = 2.5; // High-res upscale for English/Chinese characters
+    const scale = 2.5; 
     const vCoords = [0, ...(region.verticalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const hCoords = [0, ...(region.horizontalLines || []).map(l => l.position).sort((a, b) => a - b), 100];
     const rowsCount = hCoords.length - 1;
     const colsCount = vCoords.length - 1;
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
+
+    const worker = await createWorker(language);
 
     if (region.extractionStrategy === 'single-pass' || engineConfig.type === 'ai') {
       const regionCanvas = document.createElement('canvas');
@@ -421,7 +413,6 @@ export async function processTablesOnPage(
           }
         }
       } else {
-        const worker = await createWorker(language);
         const { data } = await worker.recognize(regionCanvas);
         data.words.forEach((word: any) => {
           const xPct = ((word.bbox.x0 + word.bbox.x1) / 2 / regionCanvas.width) * 100;
@@ -430,15 +421,34 @@ export async function processTablesOnPage(
           const rowIdx = hCoords.findIndex((h, i) => i < rowsCount && yPct >= h && yPct < hCoords[i + 1]);
           if (colIdx !== -1 && rowIdx !== -1) tableData[rowIdx][colIdx] = (tableData[rowIdx][colIdx] + " " + word.text).trim();
         });
-        await worker.terminate();
+
+        // SINGLE PASS FALLBACK: If cell is empty, perform targeted OCR on cell image
+        for (let r = 0; r < rowsCount; r++) {
+          for (let c = 0; c < colsCount; c++) {
+            if (!tableData[r][c].trim()) {
+              const cellCanvas = document.createElement('canvas');
+              const x = (vCoords[c] / 100) * regionCanvas.width;
+              const y = (hCoords[r] / 100) * regionCanvas.height;
+              const w = ((vCoords[c+1] - vCoords[c]) / 100) * regionCanvas.width;
+              const h = ((hCoords[r+1] - hCoords[r]) / 100) * regionCanvas.height;
+              
+              if (w > 2 && h > 2) {
+                cellCanvas.width = w; cellCanvas.height = h;
+                const cellCtx = cellCanvas.getContext('2d')!;
+                cellCtx.drawImage(regionCanvas, x, y, w, h, 0, 0, w, h);
+                const { data: cellData } = await worker.recognize(cellCanvas);
+                tableData[r][c] = cellData.text.trim();
+              }
+            }
+          }
+        }
       }
     } else {
-      const worker = await createWorker(language);
+      // Cell-by-cell strategy
       for (let r = 0; r < rowsCount; r++) {
         for (let c = 0; c < colsCount; c++) {
           const cellCanvas = document.createElement('canvas');
-          // Add 10% padding to avoid clipping text touching grid lines as requested
-          const padding = 0.1; 
+          const padding = 0.05; 
           const xStart = Math.max(0, vCoords[c] - (vCoords[c+1] - vCoords[c]) * padding);
           const xEnd = Math.min(100, vCoords[c+1] + (vCoords[c+1] - vCoords[c]) * padding);
           const yStart = Math.max(0, hCoords[r] - (hCoords[r+1] - hCoords[r]) * padding);
@@ -477,9 +487,9 @@ export async function processTablesOnPage(
           }
         }
       }
-      await worker.terminate();
     }
 
+    await worker.terminate();
     allResults.push({ id: region.id, tableName: region.name, headers: tableData[0] || [], rows: tableData });
     processedRegionsCount++;
     if (onProgress) onProgress(processedRegionsCount / totalRegions);
