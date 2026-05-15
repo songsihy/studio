@@ -81,22 +81,46 @@ export const LineEditor: React.FC<LineEditorProps> = ({
   };
 
   const copyToClipboard = async () => {
-    if (!processedImageUri) return;
+    if (!imageSrc) return;
+    setIsPreviewLoading(true);
     try {
-      const response = await fetch(processedImageUri);
+      let uriToCopy = processedImageUri;
+
+      // If not in preview mode or preview not loaded, generate a raw crop on the fly
+      if (!showProcessedPreview || !uriToCopy) {
+        const rawOptions: PreprocessingOptions = {
+          binarize: false,
+          deskew: false,
+          denoise: false,
+          thresholdMethod: 'global',
+          thresholdValue: 128,
+          thresholdBlockSize: 31,
+          thresholdC: 2,
+          thresholdMaxValue: 255,
+          adaptiveMethod: 'gaussian',
+          thresholdType: 'binary',
+          showTextBoxes: false
+        };
+        uriToCopy = await getPreprocessedPreview(imageSrc, cropRect, rawOptions, language);
+      }
+
+      const response = await fetch(uriToCopy);
       const blob = await response.blob();
       const item = new ClipboardItem({ [blob.type]: blob });
       await navigator.clipboard.write([item]);
       toast({
         title: "Copied",
-        description: "Processed preview image copied to clipboard.",
+        description: "Image copied to clipboard.",
       });
     } catch (err) {
+      console.error("Copy error:", err);
       toast({
         variant: "destructive",
         title: "Copy Failed",
         description: "Could not copy image to clipboard.",
       });
+    } finally {
+      setIsPreviewLoading(false);
     }
   };
 
@@ -253,11 +277,9 @@ export const LineEditor: React.FC<LineEditorProps> = ({
             <Button size="sm" variant={showProcessedPreview ? "secondary" : "outline"} className="h-7 text-[10px] gap-1.5" onClick={() => setShowProcessedPreview(!showProcessedPreview)}>
               {showProcessedPreview ? <EyeOff size={12} /> : <Eye size={12} />} Preview
             </Button>
-            {showProcessedPreview && processedImageUri && (
-              <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1.5" onClick={copyToClipboard}>
-                <Copy size={12} /> Copy
-              </Button>
-            )}
+            <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1.5" onClick={copyToClipboard} disabled={isPreviewLoading}>
+              <Copy size={12} /> Copy
+            </Button>
           </div>
         </div>
 
