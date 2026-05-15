@@ -74,6 +74,7 @@ export const LineEditor: React.FC<LineEditorProps> = ({
       const uri = await getPreprocessedPreview(imageSrc, cropRect, preprocessing, language);
       setProcessedImageUri(uri);
     } catch (e) {
+      console.error("Preview update error:", e);
     } finally {
       setIsPreviewLoading(false);
     }
@@ -221,7 +222,12 @@ export const LineEditor: React.FC<LineEditorProps> = ({
           </div>
 
           <div className="ml-auto flex gap-2 flex-wrap">
-            <Button size="sm" variant={preprocessing.showTextBoxes ? "secondary" : "outline"} className="h-7 text-[10px] gap-1.5" onClick={() => onPreprocessingChange?.({...preprocessing, showTextBoxes: !preprocessing.showTextBoxes})}>
+            <Button 
+              size="sm" 
+              variant={preprocessing.showTextBoxes ? "secondary" : "outline"} 
+              className="h-7 text-[10px] gap-1.5" 
+              onClick={() => onPreprocessingChange?.({...preprocessing, showTextBoxes: !preprocessing.showTextBoxes})}
+            >
               <BoxSelect size={12} /> Blocks
             </Button>
             <Button size="sm" variant={showProcessedPreview ? "secondary" : "outline"} className="h-7 text-[10px] gap-1.5" onClick={() => setShowProcessedPreview(!showProcessedPreview)}>

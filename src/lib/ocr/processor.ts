@@ -88,11 +88,6 @@ export async function detectTableRegions(imageSrc: string): Promise<TableRegion[
   });
 }
 
-/**
- * Merge Close Lines implementing:
- * 1. Wired-First (Physical borders prioritized over wireless guesses)
- * 2. Drop-Left Cluster Resolution (Always preserve the rightmost anchor in a group)
- */
 function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
   if (lines.length === 0) return [];
   const sorted = [...lines].sort((a, b) => a.position - b.position);
@@ -114,11 +109,8 @@ function mergeCloseLines(lines: TableLine[], threshold: number): TableLine[] {
 }
 
 function selectBestInGroup(group: TableLine[]): TableLine {
-  // 1. Wired-First: If any wired (physical) lines exist in this cluster, ignore wireless ones
   const wired = group.filter(l => l.id.startsWith('w-'));
   const candidates = wired.length > 0 ? wired : group;
-  
-  // 2. Drop-Left: Always pick the rightmost candidate in the sorted cluster
   return candidates[candidates.length - 1];
 }
 
@@ -129,16 +121,10 @@ export async function detectLinesInRegions(
 ): Promise<TableRegion[]> {
   const worker = await createWorker(language);
   const results: TableRegion[] = [];
-  
   for (const region of regions) {
     const { vLines, hLines } = await detectLinesInSingleRegion(imageSrc, region, language, worker);
-    results.push({
-      ...region,
-      verticalLines: vLines,
-      horizontalLines: hLines
-    });
+    results.push({ ...region, verticalLines: vLines, horizontalLines: hLines });
   }
-  
   await worker.terminate();
   return results;
 }
@@ -174,7 +160,6 @@ export async function detectLinesInSingleRegion(
         const roi = src.roi(new cv.Rect(x, y, w, h));
         const gray = new cv.Mat();
         cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY, 0);
-
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
@@ -183,7 +168,6 @@ export async function detectLinesInSingleRegion(
         let wirelessV: TableLine[] = [];
         let wirelessH: TableLine[] = [];
 
-        // 1. Wired Analysis (Physical Borders)
         const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, Math.max(2, Math.floor(h / 30))));
         const vMat = new cv.Mat();
         cv.erode(thresh, vMat, vKernel);
@@ -204,7 +188,6 @@ export async function detectLinesInSingleRegion(
           if (count > w * 0.35) wiredH.push({ id: `w-h-${i}`, type: 'horizontal', position: (i / hMat.rows) * 100 });
         }
 
-        // 2. Wireless Analysis (Layout-based Gaps using Tesseract locally for word bounding boxes)
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = w; tempCanvas.height = h;
         cv.imshow(tempCanvas, gray);
@@ -214,7 +197,6 @@ export async function detectLinesInSingleRegion(
         const xOccupancy = new Array(w).fill(false);
         data.words.forEach((word: any) => {
           const charH = word.bbox.y1 - word.bbox.y0;
-          // Apply horizontal word dilation to prevent grid lines cutting through words
           const dilation = charH * 1.5; 
           const startX = Math.floor(word.bbox.x0 - dilation);
           const endX = Math.ceil(word.bbox.x1 + dilation);
@@ -226,7 +208,6 @@ export async function detectLinesInSingleRegion(
           wirelessV.push({ id: `wl-v-${gap}`, type: 'vertical', position: (gap / w) * 100 });
         });
 
-        // 3. Horizontal Wireless (Row clustering)
         const sortedWords = [...data.words].map(w => w.bbox).sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
         const rowClusters: any[][] = [];
         if (sortedWords.length > 0) {
@@ -247,7 +228,6 @@ export async function detectLinesInSingleRegion(
           wirelessH.push({ id: `wl-h-${i}`, type: 'horizontal', position: ((upper + lower) / 2 / h) * 100 });
         }
 
-        // Apply Final Consolidation Logic: Wired-First + Drop-Left
         const finalV = mergeCloseLines([...wiredV, ...wirelessV], 1.5);
         const finalH = mergeCloseLines([...wiredH, ...wirelessH], 1.5);
 
@@ -280,10 +260,7 @@ function findGapsInOccupancy(occupancy: boolean[], minWidth: number): number[] {
 }
 
 function preprocessMatForOcr(cv: any, src: any, options?: PreprocessingOptions): any {
-  const opts = options || { 
-    binarize: false, deskew: false, denoise: false, thresholdMethod: 'global', thresholdValue: 128, 
-    thresholdBlockSize: 31, thresholdC: 2, thresholdMaxValue: 255, adaptiveMethod: 'gaussian', thresholdType: 'binary'
-  };
+  const opts = options || { binarize: false, deskew: false, denoise: false, thresholdMethod: 'global', thresholdValue: 128, thresholdBlockSize: 31, thresholdC: 2, thresholdMaxValue: 255, adaptiveMethod: 'gaussian', thresholdType: 'binary' };
   let current = src.clone();
   if (current.channels() > 1) {
     let gray = new cv.Mat();
@@ -325,6 +302,7 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) { resolve(imageSrc); return; }
+      
       if (window.cv && window.cv.imread) {
         try {
           const cv = window.cv;
@@ -332,10 +310,24 @@ export async function getPreprocessedPreview(imageSrc: string, region: TableRegi
           const roi = src.roi(new cv.Rect((region.x / 100) * src.cols, (region.y / 100) * src.rows, (region.width / 100) * src.cols, (region.height / 100) * src.rows));
           const processed = preprocessMatForOcr(cv, roi, options);
           cv.imshow(canvas, processed);
+          
+          if (options.showTextBoxes) {
+            const worker = await createWorker(language);
+            const { data } = await worker.recognize(canvas);
+            ctx.strokeStyle = '#22E1CC'; // Turquoise secondary
+            ctx.lineWidth = 2;
+            data.words.forEach((word: any) => {
+              ctx.strokeRect(word.bbox.x0, word.bbox.y0, word.bbox.x1 - word.bbox.x0, word.bbox.y1 - word.bbox.y0);
+            });
+            await worker.terminate();
+          }
+
           const dataUrl = canvas.toDataURL();
           src.delete(); roi.delete(); processed.delete();
           resolve(dataUrl); return;
-        } catch (e) {}
+        } catch (e) {
+          console.error("Preview render error:", e);
+        }
       }
       ctx.drawImage(img, (region.x / 100) * img.width, (region.y / 100) * img.height, w, h, 0, 0, w, h);
       resolve(canvas.toDataURL());
@@ -355,12 +347,10 @@ export async function processTablesOnPage(
   img.crossOrigin = 'Anonymous';
   img.src = imageSrc;
   await new Promise(resolve => img.onload = resolve);
-  
   const cv = window.cv;
   const useCv = !!(cv && cv.imread);
   let srcMat: any = null;
   if (useCv) srcMat = cv.imread(img);
-
   const allResults: ExtractedTable[] = [];
   const totalRegions = regions.length;
   let processedRegionsCount = 0;
@@ -372,7 +362,6 @@ export async function processTablesOnPage(
     const rowsCount = hCoords.length - 1;
     const colsCount = vCoords.length - 1;
     const tableData: string[][] = Array.from({ length: rowsCount }, () => Array(colsCount).fill(""));
-
     const worker = await createWorker(language);
 
     if (region.extractionStrategy === 'single-pass' || engineConfig.type === 'ai') {
@@ -386,8 +375,7 @@ export async function processTablesOnPage(
         const processed = preprocessMatForOcr(cv, roi, region.preprocessing);
         regionCanvas.width = tableW * scale; regionCanvas.height = tableH * scale;
         const ctx = regionCanvas.getContext('2d')!;
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
+        ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
         const offscreen = document.createElement('canvas');
         cv.imshow(offscreen, processed);
         ctx.drawImage(offscreen, 0, 0, tableW, tableH, 0, 0, regionCanvas.width, regionCanvas.height);
@@ -422,7 +410,6 @@ export async function processTablesOnPage(
           if (colIdx !== -1 && rowIdx !== -1) tableData[rowIdx][colIdx] = (tableData[rowIdx][colIdx] + " " + word.text).trim();
         });
 
-        // SINGLE PASS FALLBACK: If cell is empty, perform targeted OCR on cell image
         for (let r = 0; r < rowsCount; r++) {
           for (let c = 0; c < colsCount; c++) {
             if (!tableData[r][c].trim()) {
@@ -431,7 +418,6 @@ export async function processTablesOnPage(
               const y = (hCoords[r] / 100) * regionCanvas.height;
               const w = ((vCoords[c+1] - vCoords[c]) / 100) * regionCanvas.width;
               const h = ((hCoords[r+1] - hCoords[r]) / 100) * regionCanvas.height;
-              
               if (w > 2 && h > 2) {
                 cellCanvas.width = w; cellCanvas.height = h;
                 const cellCtx = cellCanvas.getContext('2d')!;
@@ -444,7 +430,6 @@ export async function processTablesOnPage(
         }
       }
     } else {
-      // Cell-by-cell strategy
       for (let r = 0; r < rowsCount; r++) {
         for (let c = 0; c < colsCount; c++) {
           const cellCanvas = document.createElement('canvas');
@@ -453,14 +438,7 @@ export async function processTablesOnPage(
           const xEnd = Math.min(100, vCoords[c+1] + (vCoords[c+1] - vCoords[c]) * padding);
           const yStart = Math.max(0, hCoords[r] - (hCoords[r+1] - hCoords[r]) * padding);
           const yEnd = Math.min(100, hCoords[r+1] + (hCoords[r+1] - hCoords[r]) * padding);
-          
-          const cellRegion = { 
-            x: region.x + (xStart / 100) * region.width,
-            y: region.y + (yStart / 100) * region.height,
-            width: ((xEnd - xStart) / 100) * region.width,
-            height: ((yEnd - yStart) / 100) * region.height
-          };
-
+          const cellRegion = { x: region.x + (xStart / 100) * region.width, y: region.y + (yStart / 100) * region.height, width: ((xEnd - xStart) / 100) * region.width, height: ((yEnd - yStart) / 100) * region.height };
           if (useCv && srcMat) {
             const tableX = Math.max(0, Math.floor((cellRegion.x / 100) * srcMat.cols));
             const tableY = Math.max(0, Math.floor((cellRegion.y / 100) * srcMat.rows));
@@ -470,17 +448,13 @@ export async function processTablesOnPage(
               const roi = srcMat.roi(new cv.Rect(tableX, tableY, tableW, tableH));
               const processed = preprocessMatForOcr(cv, roi, region.preprocessing);
               cellCanvas.width = tableW * scale; cellCanvas.height = tableH * scale;
-              const ctx = cellCanvas.getContext('2d')!;
-              ctx.imageSmoothingEnabled = true;
+              const ctx = cellCanvas.getContext('2d')!; ctx.imageSmoothingEnabled = true;
               const offscreen = document.createElement('canvas');
               cv.imshow(offscreen, processed);
               ctx.drawImage(offscreen, 0, 0, tableW, tableH, 0, 0, cellCanvas.width, cellCanvas.height);
               roi.delete(); processed.delete();
             }
-          } else {
-            fallbackToCanvas(img, cellRegion as any, cellCanvas, scale);
-          }
-          
+          } else { fallbackToCanvas(img, cellRegion as any, cellCanvas, scale); }
           if (cellCanvas.width > 0 && cellCanvas.height > 0) {
             const { data } = await worker.recognize(cellCanvas);
             tableData[r][c] = data.text.trim();
@@ -488,13 +462,11 @@ export async function processTablesOnPage(
         }
       }
     }
-
     await worker.terminate();
     allResults.push({ id: region.id, tableName: region.name, headers: tableData[0] || [], rows: tableData });
     processedRegionsCount++;
     if (onProgress) onProgress(processedRegionsCount / totalRegions);
   }
-
   if (srcMat) srcMat.delete();
   return allResults;
 }
