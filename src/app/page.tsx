@@ -547,7 +547,7 @@ export default function TableScanPro() {
         )}
 
         <div className={cn("space-y-6", status === 'idle' ? "w-full" : "lg:col-span-7")}>
-          {status === 'idle' ? (
+          {status === 'idle' || status === 'uploading' ? (
             <DropZone onFilesSelected={handleFiles} isLoading={status === 'uploading'} />
           ) : (
             <div className="space-y-6">
