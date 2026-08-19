@@ -25,7 +25,7 @@ export default function RootLayout({
         <Toaster />
         {/* Load OpenCV.js from CDN with afterInteractive strategy for better reliability */}
         <Script 
-          src="https://docs.opencv.org/4.10.0/opencv.js" 
+          src="/opencv.js" 
           strategy="afterInteractive"
         />
       </body>
