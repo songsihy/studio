@@ -88,7 +88,7 @@ export const TableSelector: React.FC<TableSelectorProps> = ({
           thresholdType: 'binary',
           showTextBoxes: false
         },
-        extractionStrategy?: 'single-pass' | 'cell-by-cell',
+        extractionStrategy: 'cell-by-cell',
       };
       onRegionsChange([...regions, newRegion]);
     }
