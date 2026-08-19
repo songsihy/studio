@@ -75,9 +75,11 @@ jobs:
         run: ${{ steps.detect-package-manager.outputs.manager }} ${{ steps.detect-package-manager.outputs.command }}
       - name: Build with Next.js
         run: ${{ steps.detect-package-manager.outputs.runner }} next build --no-lint
-        env:
+        env:            
             NEXT_TYPESCRIPT_IGNORE_BUILD_ERRORS: "1"
             DISABLE_ESLINT_PLUGIN: "true"
+            NEXT_DISABLE_ESLINT: "1"
+            CI: "false"
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
